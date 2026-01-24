@@ -1,4 +1,6 @@
 package com.di.streamnova.sharding.api;
 
-public class ColumnSelection {
-}
+import java.util.List;
+
+/** Result of selection. */
+public record ColumnSelection(List<String> columns, List<ColumnStat> considered, String note) {}

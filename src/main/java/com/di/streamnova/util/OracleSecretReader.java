@@ -1,13 +1,13 @@
-package com.prg.beam.util;
+package com.di.streamnova.util;
 
 import com.google.cloud.secretmanager.v1.AccessSecretVersionResponse;
 import com.google.cloud.secretmanager.v1.SecretManagerServiceClient;
 import com.google.cloud.secretmanager.v1.SecretVersionName;
-import com.prg.beam.dto.OracleConnectionProperties;
+
 
 public class OracleSecretReader {
 
-    public static OracleConnectionProperties getOracleProperties(String projectId) {
+    /*public static OracleConnectionProperties getOracleProperties(String projectId) {
         try (SecretManagerServiceClient client = SecretManagerServiceClient.create()) {
             String jdbcUrl  = getSecret(client, projectId, "oracle-jdbc-url");
             String username = getSecret(client, projectId, "oracle-username");
@@ -23,5 +23,6 @@ public class OracleSecretReader {
         SecretVersionName secretVersionName = SecretVersionName.of(projectId, secretId, "latest");
         AccessSecretVersionResponse response = client.accessSecretVersion(secretVersionName);
         return response.getPayload().getData().toStringUtf8();
-    }
+    }*/
+
 }

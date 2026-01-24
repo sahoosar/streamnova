@@ -1,4 +1,4 @@
-package com.prg.beam.util;
+package com.di.streamnova.util;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,6 +30,5 @@ public class GcsUtil {
             List<TableFieldSchema> fields = mapper.readValue(reader, new TypeReference<>() {});
             return new TableSchema().setFields(fields);
         }
-
     }
 }

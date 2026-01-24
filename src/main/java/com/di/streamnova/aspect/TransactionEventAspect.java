@@ -179,10 +179,14 @@ public class TransactionEventAspect {
             for (int i = 0; i < Math.min(parameters.length, parameterNames.length); i++) {
                 if (i < args.length && parameterNames[i] != null && !parameterNames[i].isEmpty()) {
                     Object value = args[i];
-                    // Sanitize sensitive values
-                    if (value instanceof String && ((String) value).contains("password")) {
+                    String paramName = parameterNames[i].toLowerCase();
+                    // Sanitize sensitive parameter names (check parameter name, not value)
+                    // This prevents false positives from values containing "password" as substring
+                    if (paramName.contains("password") || paramName.contains("pwd") || 
+                        paramName.contains("secret") || paramName.contains("credential")) {
                         context.put(parameterNames[i], "***");
                     } else {
+                        // Use sanitizeValue which handles JDBC URLs correctly
                         context.put(parameterNames[i], sanitizeValue(value));
                     }
                 }
@@ -191,9 +195,16 @@ public class TransactionEventAspect {
             // Extract by parameter name (if available via reflection)
             for (int i = 0; i < parameters.length && i < args.length; i++) {
                 String paramName = parameters[i].getName();
+                String paramNameLower = paramName.toLowerCase();
                 // Skip common parameters that aren't useful
                 if (!paramName.equals("pipeline") && !paramName.equals("config")) {
-                    context.put(paramName, sanitizeValue(args[i]));
+                    // Sanitize sensitive parameter names (check parameter name, not value)
+                    if (paramNameLower.contains("password") || paramNameLower.contains("pwd") || 
+                        paramNameLower.contains("secret") || paramNameLower.contains("credential")) {
+                        context.put(paramName, "***");
+                    } else {
+                        context.put(paramName, sanitizeValue(args[i]));
+                    }
                 }
             }
         }

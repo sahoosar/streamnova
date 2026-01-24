@@ -109,17 +109,19 @@ public final class MachineTypeBasedOptimizer {
         int cpuBasedShards = environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
         
         // For High-Memory, prefer fewer shards with larger records per shard
-        int machineTypeShards = Math.max(sizeBasedShardCount, cpuBasedShards);
+        // Start with the minimum of size-based and CPU-based to prefer fewer shards
+        int machineTypeShards = Math.min(sizeBasedShardCount, cpuBasedShards);
         
         if (estimatedRowCount != null && estimatedRowCount > 0) {
             // Target larger records per shard for High-Memory (memory-efficient)
             long targetRecordsPerShard = 100_000L; // Larger for High-Memory
             int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecordsPerShard);
-            // Use the smaller of the two (fewer shards for memory efficiency)
-            machineTypeShards = Math.min(machineTypeShards, Math.max(sizeBasedShardCount, recordsBasedShards));
+            // For High-Memory, prefer fewer shards: take the minimum of all options
+            // This ensures we don't create more shards than necessary, optimizing for memory
+            machineTypeShards = Math.min(machineTypeShards, Math.min(sizeBasedShardCount, recordsBasedShards));
         }
         
-        log.info("High-Memory machine optimization: {} vCPUs × {} workers × {} maxShards/vCPU = {} base shards, final = {}",
+        log.info("High-Memory machine optimization: {} vCPUs × {} workers × {} maxShards/vCPU = {} base shards, final = {} (preferring fewer shards for memory efficiency)",
                 environment.virtualCpus, environment.workerCount, profile.maxShardsPerVcpu(),
                 cpuBasedShards, machineTypeShards);
         

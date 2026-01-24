@@ -115,8 +115,10 @@ public class DataflowRunnerService {
 
     @LogTransaction(
         eventType = "LOAD_OPERATION",
-        transactionContext = "load_operation_start",
-        parameterNames = {"sourceType", "tableName", "jdbcUrl"}
+        transactionContext = "load_operation_start"
+        // Note: parameterNames removed - method parameters (pipeline, jobId) don't match 
+        // the desired logged values (sourceType, tableName, jdbcUrl) which are extracted 
+        // from config inside the method. AOP will extract actual parameters automatically.
     )
     private PCollection<Row> startLoadOperation(Pipeline pipeline, String jobId ) {
         // Get the full configuration
@@ -141,7 +143,12 @@ public class DataflowRunnerService {
             throw new IllegalArgumentException("Source configuration cannot be null");
         }
 
-        log.info("Successfully read data from source: {}", pipelineSrcConfig.getType());
+        // Log source configuration details for context
+        log.info("Successfully read data from source: {} (table: {}, jdbcUrl: {})", 
+                pipelineSrcConfig.getType(), 
+                pipelineSrcConfig.getTable(),
+                pipelineSrcConfig.getJdbcUrl() != null ? 
+                    pipelineSrcConfig.getJdbcUrl().replaceAll("password=[^;&]+", "password=***") : "null");
 
         // Handle source configuration
         SourceHandler<PipelineConfigSource> handler = registry.getHandler(pipelineSrcConfig.getType());
