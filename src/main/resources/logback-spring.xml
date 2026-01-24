@@ -1,0 +1,46 @@
+<configuration>
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="StreamNova"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <!-- add thread name and MDC jobId -->
+            <!--pattern>%d{HH:mm:ss.SSS} %-5level [%t] [jobId=%X{jobId}] [app=%property{appName}] %logger{36} - %msg%n</pattern-->
+            <!-- Color pattern: ERROR=red, WARN=yellow, INFO=green, DEBUG=cyan -->
+            <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%t] [app=%property{appName}] %logger{36} - %msg%n</pattern>
+        </encoder>
+        <!-- Filter to suppress only AsynchronousCloseException (harmless shutdown error) -->
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator>
+                <expression>
+                    message != null &amp;&amp; 
+                    (message.contains("AsynchronousCloseException") || 
+                     (throwableProxy != null &amp;&amp; throwableProxy.getClassName().contains("AsynchronousCloseException")))
+                </expression>
+            </evaluator>
+            <onMatch>DENY</onMatch>
+            <onMismatch>NEUTRAL</onMismatch>
+        </filter>
+    </appender>
+    
+    <!-- Suppress null messages from Apache Beam JDBC IO -->
+    <logger name="org.apache.beam.sdk.io.jdbc" level="WARN"/>
+
+    <!-- Optional: if you want PID without converters -->
+    <!-- <property name="PID_PATTERN" value="%property{PID:-unknown}"/> -->
+    <!-- and then include [pid=${PID_PATTERN}] in the pattern if desired -->
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <!-- Enable your named loggers if you use them -->
+    <logger name="com.di.streamnova" level="INFO"/>
+    
+    <!-- Explicit logger for TransactionEventLogger to ensure events are visible -->
+    <logger name="com.di.streamnova.util.TransactionEventLogger" level="INFO" additivity="true"/>
+    
+    <!-- VALID and DLQ loggers - COMMENTED OUT: Only used in unused example method checkUsingLogging() -->
+    <!-- Uncomment these if you need row-level logging for VALID/DLQ rows -->
+    <!-- <logger name="VALID" level="INFO" additivity="true"/> -->
+    <!-- <logger name="DLQ"   level="INFO" additivity="true"/> -->
+</configuration>

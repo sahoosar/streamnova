@@ -1,0 +1,36 @@
+pipeline:
+  config:
+    source:
+      type: postgres
+      driver: org.postgresql.Driver
+      jdbcUrl: jdbc:postgresql://localhost:5432/marketdb
+      username: saroj
+      password: admin
+      table: market_summary
+      fetchSize: 5000     # tune as needed
+      upperBoundColumn:
+      numPartitions: 0      # calculate based on data size
+      maxColumns: 3
+      maximumPoolSize: 16
+      minimumIdle: 4
+      idleTimeout: 300000 #ms
+      connectionTimeout: 300000 #ms
+      maxLifetime: 1800000 #ms
+      # Resource Configuration (REQUIRED - use 0 for auto-calculation based on machine type)
+      shards: 0      # REQUIRED - shard count (0 = calculate automatically based on machine type and data size)
+      workers: 0     # REQUIRED - worker count (0 = calculate automatically based on machine type and data size)
+      machineType:   # REQUIRED - machine type (e.g., "n2-standard-4", "n2-highcpu-8", "n2-highmem-4")
+                     #           If not provided, will detect from PipelineOptions or use record-count scenarios
+      partitions: 0  # optional - legacy support (same as shards)
+      fetchFactor: 1.0 # optional (e.g., 1.25)
+    intermediate:
+      dataFormat: parquet
+      gcsPath: gs://my-bucket/stage/employees/
+    target:
+      type: bigquery
+      dataset: my_dataset
+      table: employees
+      schemaPath: gs://my-bucket/schemas/employees_schema.json
+      loadMode: load_from_gcs
+      sourceFormat: PARQUET
+      writeDisposition: WRITE_APPEND
