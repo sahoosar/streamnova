@@ -42,24 +42,39 @@ public final class ShardPlanner {
     // ============================================================================
     
     /**
-     * Unified method: Calculates optimal shard and worker plan based on machine type and data characteristics.
+     * Generic method: Calculates optimal shard and worker plan for ANY deployment environment.
      * 
-     * This is the PRIMARY method that should be used in production. It calculates both shards and workers
-     * together as a cohesive unit, ensuring they are optimized based on machine type resources.
+     * <p><b>Key Features:</b></p>
+     * <ul>
+     *   <li><b>Environment-Agnostic:</b> Works seamlessly across Local, GCP, AWS, and other environments</li>
+     *   <li><b>Zero-Config Deployment:</b> Automatically detects environment and applies appropriate defaults</li>
+     *   <li><b>Smart Defaults:</b> Provides sensible defaults for all environments without manual configuration</li>
+     *   <li><b>Flexible Configuration:</b> Supports config file, PipelineOptions, system properties, and environment variables</li>
+     * </ul>
      * 
-     * Priority order:
-     * 1. User-provided values (if within machine type limits)
-     * 2. Machine type-based calculation (if machine type provided)
-     * 3. Record-count-based scenarios (if machine type not provided)
+     * <p><b>Calculation Priority:</b></p>
+     * <ol>
+     *   <li>User-provided values (if within machine type limits)</li>
+     *   <li>Machine type-based calculation (if machine type provided)</li>
+     *   <li>Record-count-based scenarios (if machine type not provided - defaults to LOCAL)</li>
+     * </ol>
      * 
-     * @param pipelineOptions Pipeline execution options
+     * <p><b>Automatic Environment Detection:</b></p>
+     * <ul>
+     *   <li>If machine type missing → automatically defaults to LOCAL (safe, easy deployment)</li>
+     *   <li>If GCP detected → requires machine type (validated)</li>
+     *   <li>If AWS detected → uses AWS-specific calculations (future support)</li>
+     *   <li>If LOCAL → uses local CPU cores and conservative defaults</li>
+     * </ul>
+     * 
+     * @param pipelineOptions Pipeline execution options (can be null for local execution)
      * @param databasePoolMaxSize Maximum database connection pool size (null for unlimited)
      * @param estimatedRowCount Estimated number of rows (null if unknown)
      * @param averageRowSizeBytes Average row size in bytes (null if unknown, defaults to 200)
      * @param targetMbPerShard Target MB per shard (null to use default: 200 MB)
      * @param userProvidedShardCount User-provided shard count (null or <= 0 to calculate automatically)
      * @param userProvidedWorkerCount User-provided worker count (null or <= 0 to calculate automatically)
-     * @param userProvidedMachineType User-provided machine type (null or blank to detect from PipelineOptions)
+     * @param userProvidedMachineType User-provided machine type (null or blank to auto-detect)
      * @return ShardWorkerPlan containing shard count, worker count, machine type, and calculation strategy
      */
     public static ShardWorkerPlan calculateOptimalShardWorkerPlan(
@@ -99,6 +114,11 @@ public final class ShardPlanner {
             environment = EnvironmentDetector.detectEnvironment(pipelineOptions, userProvidedMachineType);
             EnvironmentDetector.logEnvironmentDetection(environment);
             
+            // CRITICAL: Validate machine type requirement for GCP Dataflow deployments
+            // Note: If machine type is missing, it's already treated as LOCAL, so this validation
+            // will only apply when GCP is detected AND machine type is provided
+            validateMachineTypeForGcpDeployment(environment, pipelineOptions, userProvidedMachineType);
+            
             // PRIORITY 1: If user provided both shards and workers, validate and return
             if (userProvidedShardCount != null && userProvidedShardCount > 0 
                     && userProvidedWorkerCount != null && userProvidedWorkerCount > 0) {
@@ -115,8 +135,8 @@ public final class ShardPlanner {
                         validatedShardCount, environment, profile, databasePoolMaxSize);
                 validatedShardCount = ShardCountRounder.roundToOptimalValue(validatedShardCount, environment);
                 
-                log.info("User-provided plan: {} shards, {} workers (machine type: {})", 
-                        validatedShardCount, validatedWorkerCount, environment.machineType);
+                log.info("[ENV: {}] User-provided plan: {} shards, {} workers (machine type: {})", 
+                        environment.cloudProvider.name(), validatedShardCount, validatedWorkerCount, environment.machineType);
                 
                 // Record metrics
                 if (metricsCollector != null) {
@@ -140,26 +160,28 @@ public final class ShardPlanner {
                 // NOTE: Calculation is DATA-DRIVEN but CONSTRAINED by machine type limits
                 // Data size determines optimal shards, but machine type provides the maximum cap
                 strategy = "MACHINE_TYPE";
-                log.info("Machine type provided ({}): calculating shards and workers based on machine type. " +
+                String envName = environment.cloudProvider.name();
+                log.info("[ENV: {}] Machine type provided ({}): calculating shards and workers based on machine type. " +
                         "Shards will be calculated from data size but capped at machine type maximum.", 
-                        environment.machineType);
+                        envName, environment.machineType);
                 
                 // Calculate workers first (if not provided)
                 if (userProvidedWorkerCount != null && userProvidedWorkerCount > 0) {
                     calculatedWorkerCount = MachineTypeResourceValidator.validateWorkerCount(
                             userProvidedWorkerCount, environment);
-                    log.info("Using user-provided worker count: {} workers", calculatedWorkerCount);
+                    log.info("[ENV: {}] Using user-provided worker count: {} workers", envName, calculatedWorkerCount);
                 } else {
                     // Calculate optimal workers based on machine type and data
                     calculatedWorkerCount = UnifiedCalculator.calculateOptimalWorkersForMachineType(
                             environment, estimatedRowCount, averageRowSizeBytes, databasePoolMaxSize);
-                    log.info("Calculated optimal worker count: {} workers (based on machine type: {})", 
-                            calculatedWorkerCount, environment.machineType);
+                    log.info("[ENV: {}] Calculated optimal worker count: {} workers (based on machine type: {})", 
+                            envName, calculatedWorkerCount, environment.machineType);
                 }
                 
                 // Update environment with calculated workers
                 environment = new ExecutionEnvironment(
-                        environment.machineType, environment.virtualCpus, calculatedWorkerCount, environment.isLocalExecution);
+                        environment.machineType, environment.virtualCpus, calculatedWorkerCount, 
+                        environment.isLocalExecution, environment.cloudProvider);
                 
                 // Calculate shards based on machine type
                 if (userProvidedShardCount != null && userProvidedShardCount > 0) {
@@ -177,20 +199,30 @@ public final class ShardPlanner {
                 
             } else {
                 // Machine type NOT provided → use record-count-based scenarios
+                // NOTE: Shards are calculated based on DATA SIZE and RECORD COUNT scenarios
+                // No machine type constraints, but still respects local CPU cores and database pool limits
                 strategy = "RECORD_COUNT";
-                log.info("Machine type not provided: calculating shards and workers based on record count scenarios");
+                String envName = environment.cloudProvider.name();
+                log.info("[ENV: {}] Machine type not provided: calculating shards and workers based on record count scenarios. " +
+                        "Shards will be optimized for data size and record count, without machine type constraints.", envName);
                 
                 // Calculate shards using record-count scenarios
                 DataSizeInfo dataSizeInfo = DataSizeCalculator.calculateDataSize(estimatedRowCount, averageRowSizeBytes);
                 if (dataSizeInfo.hasSizeInformation) {
+                    // PATH 1: Size-based strategy (when data size info is available)
+                    // Calculates: shards = total_size_mb / target_mb_per_shard
+                    // Then applies scenario optimization based on record count
                     calculatedShardCount = calculateShardsUsingSizeBasedStrategy(
                             environment, dataSizeInfo, targetMbPerShard, databasePoolMaxSize, estimatedRowCount);
                 } else {
+                    // PATH 2: Row-count-based strategy (when data size info is NOT available)
+                    // Uses profile-based calculation as base, then applies scenario optimization
                     calculatedShardCount = calculateShardsUsingRowCountBasedStrategy(
                             environment, estimatedRowCount, databasePoolMaxSize);
                 }
                 
                 // Calculate workers based on shards
+                // Formula: workers = ceil(shards / shards_per_worker)
                 if (userProvidedWorkerCount != null && userProvidedWorkerCount > 0) {
                     calculatedWorkerCount = userProvidedWorkerCount;
                 } else {
@@ -208,10 +240,12 @@ public final class ShardPlanner {
             
             // Update environment with final worker count
             environment = new ExecutionEnvironment(
-                    environment.machineType, environment.virtualCpus, calculatedWorkerCount, environment.isLocalExecution);
+                    environment.machineType, environment.virtualCpus, calculatedWorkerCount, 
+                    environment.isLocalExecution, environment.cloudProvider);
             
-            log.info("Final plan [{}]: {} shards, {} workers (machine type: {}, vCPUs: {})", 
-                    strategy, calculatedShardCount, calculatedWorkerCount, 
+            String envName = environment.cloudProvider.name();
+            log.info("[ENV: {}] Final plan [{}]: {} shards, {} workers (machine type: {}, vCPUs: {})", 
+                    envName, strategy, calculatedShardCount, calculatedWorkerCount, 
                     environment.machineType != null ? environment.machineType : "local", environment.virtualCpus);
             
             // Record metrics
@@ -233,15 +267,118 @@ public final class ShardPlanner {
             if (metricsCollector != null) {
                 metricsCollector.recordShardPlanningError();
             }
-            log.error("Error calculating optimal shard and worker plan", e);
+            String envName = (environment != null) ? environment.cloudProvider.name() : "UNKNOWN";
+            log.error("[ENV: {}] Error calculating optimal shard and worker plan", envName, e);
             throw e;
         }
     }
 
     // ============================================================================
-    // Size-Based Calculation Strategy
+    // Validation Methods
     // ============================================================================
     
+    /**
+     * Validates that machine type is provided when deploying to GCP Dataflow.
+     * 
+     * <p><b>Requirement:</b> Machine type is MANDATORY for GCP Dataflow deployments to ensure:</p>
+     * <ul>
+     *   <li>Proper resource allocation and cost optimization</li>
+     *   <li>Accurate shard and worker calculations</li>
+     *   <li>Resource constraint validation</li>
+     *   <li>Production-ready configuration</li>
+     * </ul>
+     * 
+     * <p><b>Exception:</b> Local execution does not require machine type (uses local CPU cores).
+     * If machine type is missing, the system automatically defaults to LOCAL execution.</p>
+     * 
+     * @param environment Detected execution environment
+     * @param pipelineOptions Pipeline options for GCP detection
+     * @param userProvidedMachineType User-provided machine type from config
+     * @throws IllegalArgumentException if GCP Dataflow is detected but machine type is missing
+     */
+    private static void validateMachineTypeForGcpDeployment(ExecutionEnvironment environment,
+                                                           PipelineOptions pipelineOptions,
+                                                           String userProvidedMachineType) {
+        // If environment is already LOCAL (machine type missing), skip validation
+        // Missing machine type automatically defaults to LOCAL execution
+            String envName = environment.cloudProvider.name();
+            
+            if (environment.isLocalExecution || environment.cloudProvider == ExecutionEnvironment.CloudProvider.LOCAL) {
+            log.debug("[ENV: {}] Local execution detected (machine type missing) - machine type validation skipped", envName);
+            return;
+        }
+        
+        // Check if we're running on GCP Dataflow
+        boolean isGcpDataflow = EnvironmentDetector.isGcpDataflow(pipelineOptions);
+        
+        // If GCP Dataflow is detected, machine type MUST be provided
+        if (isGcpDataflow) {
+            String machineType = environment.machineType;
+            
+            if (machineType == null || machineType.isBlank()) {
+                String errorMessage = String.format(
+                    "[ENV: %s] ❌ Machine type is REQUIRED for GCP Dataflow deployments.\n\n" +
+                    "GCP Dataflow detected (project and region set), but machine type is missing.\n\n" +
+                    "Please provide machine type in one of the following ways:\n" +
+                    "1. In pipeline_config.yml:\n" +
+                    "   pipeline:\n" +
+                    "     config:\n" +
+                    "       source:\n" +
+                    "         machineType: n2-standard-4\n\n" +
+                    "2. In PipelineOptions:\n" +
+                    "   dataflowOptions.setWorkerMachineType(\"n2-standard-4\");\n\n" +
+                    "3. Via command line:\n" +
+                    "   --machineType=n2-standard-4\n\n" +
+                    "Machine type is mandatory for GCP to ensure:\n" +
+                    "- Proper resource allocation and cost optimization\n" +
+                    "- Accurate shard and worker calculations\n" +
+                    "- Resource constraint validation\n" +
+                    "- Production-ready configuration\n\n" +
+                    "Note: If machine type is not provided, the system will automatically default to LOCAL execution.",
+                    envName
+                );
+                
+                log.error("[ENV: {}] {}", envName, errorMessage);
+                throw new IllegalArgumentException(errorMessage);
+            } else {
+                log.info("[ENV: {}] ✅ Machine type validation passed for GCP Dataflow: {} (provided via {})",
+                        envName, machineType,
+                        userProvidedMachineType != null && !userProvidedMachineType.isBlank() 
+                                ? "config file" 
+                                : "PipelineOptions");
+            }
+        } else {
+            log.debug("[ENV: {}] Not GCP Dataflow - machine type validation skipped", envName);
+        }
+    }
+    
+    // ============================================================================
+    // Size-Based Calculation Strategy (when data size information is available)
+    // ============================================================================
+    
+    /**
+     * Calculates shards when data size information (MB) is available.
+     * 
+     * <p><b>Decision Flow (NO Machine Type):</b></p>
+     * <ol>
+     *   <li><b>Base Calculation:</b> shards = total_size_mb / target_mb_per_shard (default: 200 MB/shard)</li>
+     *   <li><b>Scenario Optimization:</b> Apply record-count-based scenarios:
+     *       <ul>
+     *         <li>Very Small (< 100K): 2K-5K records/shard, min 16 shards</li>
+     *         <li>Small-Medium (100K-500K): 5K-10K records/shard, min 12 shards</li>
+     *         <li>Medium-Small (500K-1M): 10K-20K records/shard, max 100 shards</li>
+     *         <li>Medium (1M-5M): 25K-50K records/shard, max 200 shards</li>
+     *         <li>Large (5M-10M): 50K-100K records/shard, max 500 shards</li>
+     *       </ul>
+     *   </li>
+     *   <li><b>Cost Optimization:</b> Optimize for cost efficiency</li>
+     *   <li><b>Constraints:</b> Apply database pool limits and local CPU constraints</li>
+     *   <li><b>Rounding:</b> Round to optimal value (power-of-2 for GCP, exact for local)</li>
+     * </ol>
+     * 
+     * <p><b>Key Principle:</b> Data size drives the calculation, then record count scenarios refine it.
+     * No machine type constraints, but respects local CPU cores and database pool limits.</p>
+     */
     private static int calculateShardsUsingSizeBasedStrategy(
             ExecutionEnvironment environment,
             DataSizeInfo dataSizeInfo,
@@ -253,29 +390,31 @@ public final class ShardPlanner {
                 ? targetMbPerShard 
                 : SizeBasedConfig.DEFAULT_TARGET_MB_PER_SHARD;
         
-        // Calculate base shards from size: num_shards = total_size_mb / target_mb_per_shard
+        // STEP 1: Calculate base shards from data size
+        // Formula: num_shards = total_size_mb / target_mb_per_shard
         int sizeBasedShardCount = (int) Math.ceil(dataSizeInfo.totalSizeMb / targetMb);
         sizeBasedShardCount = Math.max(1, sizeBasedShardCount);
         
-        log.info("Size-based shard calculation: {} MB total / {} MB per shard (target) = {} shards", 
-                String.format("%.2f", dataSizeInfo.totalSizeMb), targetMb, sizeBasedShardCount);
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] Size-based shard calculation: {} MB total / {} MB per shard (target) = {} shards", 
+                envName, String.format("%.2f", dataSizeInfo.totalSizeMb), targetMb, sizeBasedShardCount);
         
-        // PRIORITY 1: Machine type-based optimization (if machine type is provided)
+        // STEP 2: Apply optimization based on whether machine type is provided
         MachineProfile profile = MachineProfileProvider.getProfile(environment.machineType);
         int optimizedShardCount;
         
         if (environment.machineType != null && !environment.machineType.isBlank() && !environment.isLocalExecution) {
             // Machine type is provided → use machine-type-based calculation
-            log.info("Machine type provided ({}): using machine-type-based optimization", environment.machineType);
+            log.info("[ENV: {}] Machine type provided ({}): using machine-type-based optimization", envName, environment.machineType);
             optimizedShardCount = MachineTypeBasedOptimizer.optimizeBasedOnMachineType(
                     sizeBasedShardCount, estimatedRowCount, environment, profile, databasePoolMaxSize, dataSizeInfo);
         } else {
             // Machine type NOT provided → fall back to record-count-based scenarios
-            log.info("Machine type not provided: falling back to record-count-based scenario optimization");
+            log.info("[ENV: {}] Machine type not provided: applying scenario-based optimization based on record count", envName);
             optimizedShardCount = ScenarioOptimizer.optimizeForDatasetSize(
                     sizeBasedShardCount, estimatedRowCount, environment, databasePoolMaxSize);
             
-            // Apply machine type adjustments (if any machine type info available)
+            // Apply machine type adjustments (if any machine type info available, e.g., local CPU cores)
             optimizedShardCount = MachineTypeAdjuster.adjustForMachineType(
                     optimizedShardCount, environment, profile);
         }
@@ -300,37 +439,63 @@ public final class ShardPlanner {
     }
 
     // ============================================================================
-    // Row-Count-Based Calculation Strategy
+    // Row-Count-Based Calculation Strategy (when data size information is NOT available)
     // ============================================================================
     
+    /**
+     * Calculates shards when data size information (MB) is NOT available, only record count.
+     * 
+     * <p><b>Decision Flow (NO Machine Type):</b></p>
+     * <ol>
+     *   <li><b>Very Small Datasets (< 10K records):</b> Use CPU-core-based optimization
+     *       <ul>
+     *         <li>Formula: shards = min(total_cores, max_shards_from_data)</li>
+     *         <li>Target: 50+ records per shard</li>
+     *         <li>Respects: database pool limits</li>
+     *       </ul>
+     *   </li>
+     *   <li><b>Larger Datasets (>= 10K records):</b>
+     *       <ul>
+     *         <li><b>Base Calculation:</b> ProfileBasedCalculator (uses vCPUs × workers × profile factors)</li>
+     *         <li><b>Scenario Optimization:</b> Apply record-count-based scenarios (same as size-based strategy)</li>
+     *         <li><b>Constraints:</b> Database pool limits, local CPU constraints</li>
+     *       </ul>
+     *   </li>
+     * </ol>
+     * 
+     * <p><b>Key Principle:</b> When size info is unavailable, use profile-based calculation (CPU/worker-based)
+     * as starting point, then refine with record-count scenarios.</p>
+     */
     private static int calculateShardsUsingRowCountBasedStrategy(
             ExecutionEnvironment environment,
             Long estimatedRowCount,
             Integer databasePoolMaxSize) {
         
-        log.info("Falling back to row-count-based calculation (size-based calculation not available)");
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] Row-count-based calculation: data size information not available, using record count only", envName);
         
         if (estimatedRowCount != null && estimatedRowCount > 0) {
-            log.info("Row count available: {} rows (record size information not available for size-based calculation)", 
-                    estimatedRowCount);
+            log.info("[ENV: {}] Row count available: {} rows (record size information not available for size-based calculation)", 
+                    envName, estimatedRowCount);
         } else {
-            log.warn("Row count not available: {}", estimatedRowCount);
+            log.warn("[ENV: {}] Row count not available: {}", envName, estimatedRowCount);
         }
         
-        // For very small datasets, use CPU-core-based optimization
+        // STEP 1: For very small datasets (< 10K), use CPU-core-based optimization
         if (estimatedRowCount != null && estimatedRowCount > 0 && estimatedRowCount < 10_000) {
+            log.info("[ENV: {}] Very small dataset detected (< 10K records): using CPU-core-based optimization", envName);
             return SmallDatasetOptimizer.calculateForSmallDataset(
                     environment, estimatedRowCount, databasePoolMaxSize);
         }
         
-        // PRIORITY 1: Machine type-based optimization (if machine type is provided)
+        // STEP 2: For larger datasets, use profile-based calculation + scenario optimization
         MachineProfile profile = MachineProfileProvider.getProfile(environment.machineType);
         int shardCount;
         
         if (environment.machineType != null && !environment.machineType.isBlank() && !environment.isLocalExecution) {
             // Machine type is provided → use machine-type-based calculation
-            log.info("Machine type provided ({}): using machine-type-based optimization for row-count strategy", 
-                    environment.machineType);
+            log.info("[ENV: {}] Machine type provided ({}): using machine-type-based optimization for row-count strategy", 
+                    envName, environment.machineType);
             
             // Calculate base from profile
             int profileBasedShards = ProfileBasedCalculator.calculateUsingProfile(
@@ -341,21 +506,23 @@ public final class ShardPlanner {
             shardCount = MachineTypeBasedOptimizer.optimizeBasedOnMachineType(
                     profileBasedShards, estimatedRowCount, environment, profile, databasePoolMaxSize, emptyDataSize);
         } else {
-            // Machine type NOT provided → fall back to record-count-based scenarios
-            log.info("Machine type not provided: falling back to record-count-based scenario optimization");
+            // Machine type NOT provided → use profile-based + scenario optimization
+            log.info("[ENV: {}] Machine type not provided: using profile-based calculation + scenario optimization", envName);
             
-            // Use profile-based calculation as base
+            // STEP 2a: Calculate base shards using profile (vCPUs × workers × profile factors)
             shardCount = ProfileBasedCalculator.calculateUsingProfile(
                     environment, profile, databasePoolMaxSize);
+            log.info("[ENV: {}] Profile-based base calculation: {} shards (from vCPUs: {}, workers: {})",
+                    envName, shardCount, environment.virtualCpus, environment.workerCount);
             
-            // Apply scenario-based optimization (record-count scenarios)
+            // STEP 2b: Apply scenario-based optimization (record-count scenarios)
             if (estimatedRowCount != null && estimatedRowCount > 0) {
-                // Apply scenario optimization based on record count
+                log.info("[ENV: {}] Applying scenario optimization based on record count: {} records", envName, estimatedRowCount);
                 shardCount = ScenarioOptimizer.optimizeForDatasetSize(
                         shardCount, estimatedRowCount, environment, databasePoolMaxSize);
             }
             
-            // Apply machine type adjustments (if any machine type info available)
+            // STEP 2c: Apply machine type adjustments (if any machine type info available, e.g., local CPU cores)
             shardCount = MachineTypeAdjuster.adjustForMachineType(shardCount, environment, profile);
         }
         
@@ -435,27 +602,30 @@ public final class ShardPlanner {
                 int validatedWorkerCount = MachineTypeResourceValidator.validateWorkerCount(
                         userProvidedWorkerCount, environment);
                 
+                String envName = environment.cloudProvider.name();
                 if (validatedWorkerCount != userProvidedWorkerCount) {
-                    log.warn("User-provided worker count {} adjusted to {} based on machine type constraints", 
-                            userProvidedWorkerCount, validatedWorkerCount);
+                    log.warn("[ENV: {}] User-provided worker count {} adjusted to {} based on machine type constraints", 
+                            envName, userProvidedWorkerCount, validatedWorkerCount);
                 } else {
-                    log.info("Using user-provided worker count: {} workers (within machine type limits)", validatedWorkerCount);
+                    log.info("[ENV: {}] Using user-provided worker count: {} workers (within machine type limits)", 
+                            envName, validatedWorkerCount);
                 }
                 
                 return validatedWorkerCount;
             }
             
             ExecutionEnvironment environment = EnvironmentDetector.detectEnvironment(pipelineOptions, null);
+            String envName = environment.cloudProvider.name();
             
             // If workers are already specified, return them (no calculation needed)
             if (environment.workerCount > 1) {
-                log.info("Worker count already specified: {} workers", environment.workerCount);
+                log.info("[ENV: {}] Worker count already specified: {} workers", envName, environment.workerCount);
                 return environment.workerCount;
             }
             
             // For local execution, workers concept doesn't apply
             if (environment.isLocalExecution) {
-                log.info("Local execution: worker count calculation not applicable");
+                log.info("[ENV: {}] Local execution: worker count calculation not applicable", envName);
                 return 1;
             }
             
@@ -488,14 +658,19 @@ public final class ShardPlanner {
             // Round to power of 2 for GCP efficiency (e.g., 1, 2, 4, 8, 16, 32)
             optimalWorkers = WorkerCountCalculator.roundToOptimalWorkerCount(optimalWorkers);
             
-            log.info("Optimal worker calculation: {} shards / {} shards-per-worker = {} workers (rounded to {})",
-                    shards, shardsPerWorker, workersNeeded, optimalWorkers);
-            log.info("Worker bounds: min={} (data), max={} (cost), final={}",
-                    minWorkersForData, maxWorkersForCost, optimalWorkers);
+            log.info("[ENV: {}] Optimal worker calculation: {} shards / {} shards-per-worker = {} workers (rounded to {})",
+                    envName, shards, shardsPerWorker, workersNeeded, optimalWorkers);
+            log.info("[ENV: {}] Worker bounds: min={} (data), max={} (cost), final={}",
+                    envName, minWorkersForData, maxWorkersForCost, optimalWorkers);
             
             return Math.max(1, optimalWorkers);
         } catch (Exception e) {
-            log.error("Error calculating optimal worker count, defaulting to 1", e);
+            String envName = "UNKNOWN";
+            try {
+                ExecutionEnvironment env = EnvironmentDetector.detectEnvironment(pipelineOptions, null);
+                envName = env.cloudProvider.name();
+            } catch (Exception ignored) {}
+            log.error("[ENV: {}] Error calculating optimal worker count, defaulting to 1", envName, e);
             return 1;
         }
     }

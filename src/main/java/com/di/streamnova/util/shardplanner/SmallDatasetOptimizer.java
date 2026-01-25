@@ -12,8 +12,9 @@ public final class SmallDatasetOptimizer {
     public static int calculateForSmallDataset(ExecutionEnvironment environment, 
                                                long estimatedRowCount, 
                                                Integer databasePoolMaxSize) {
-        log.info("Optimizing for small dataset: {} records, {} vCPUs, {} workers", 
-                estimatedRowCount, environment.virtualCpus, environment.workerCount);
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] Optimizing for small dataset: {} records, {} vCPUs, {} workers", 
+                envName, estimatedRowCount, environment.virtualCpus, environment.workerCount);
         
         int totalCores = environment.virtualCpus * environment.workerCount;
         int minRecordsPerShard = 50;
@@ -41,8 +42,8 @@ public final class SmallDatasetOptimizer {
         int recordsPerShard = (int) (estimatedRowCount / optimalShardCount);
         int remainder = (int) (estimatedRowCount % optimalShardCount);
         
-        log.info("Small dataset optimization: {} shards (matching {} cores), ~{} records per shard ({} shards will have +1 record), {} total cores available", 
-                optimalShardCount, totalCores, recordsPerShard, remainder, totalCores);
+        log.info("[ENV: {}] Small dataset optimization: {} shards (matching {} cores), ~{} records per shard ({} shards will have +1 record), {} total cores available", 
+                envName, optimalShardCount, totalCores, recordsPerShard, remainder, totalCores);
         
         return optimalShardCount;
     }

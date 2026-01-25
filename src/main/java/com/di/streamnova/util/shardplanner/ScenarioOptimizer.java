@@ -15,6 +15,7 @@ public final class ScenarioOptimizer {
             return sizeBasedShardCount;
         }
         
+        String envName = environment.cloudProvider.name();
         String scenarioName;
         int optimizedShardCount;
         
@@ -50,14 +51,16 @@ public final class ScenarioOptimizer {
                     sizeBasedShardCount, estimatedRowCount, environment);
         }
         
-        log.info("Scenario-based optimization [{}]: sizeBased={} → optimized={} shards", 
-                scenarioName, sizeBasedShardCount, optimizedShardCount);
+        log.info("[ENV: {}] Scenario-based optimization [{}]: sizeBased={} → optimized={} shards", 
+                envName, scenarioName, sizeBasedShardCount, optimizedShardCount);
         
         return optimizedShardCount;
     }
     
     private static int optimizeForVerySmallDataset(int sizeBasedShardCount, long estimatedRowCount,
                                                    ExecutionEnvironment environment, Integer databasePoolMaxSize) {
+        String envName = environment.cloudProvider.name();
+        
         // Calculate based on records per shard (2K records/shard for maximum parallelism)
         int recordsBasedShardCount = (int) Math.ceil(
                 (double) estimatedRowCount / DatasetScenarioConfig.OPTIMAL_RECORDS_PER_SHARD_VERY_SMALL);
@@ -80,14 +83,16 @@ public final class ScenarioOptimizer {
         optimalShardCount = Math.max(optimalShardCount, minShardsForMaxRecords);
         
         long recordsPerShard = estimatedRowCount / optimalShardCount;
-        log.info("Very small dataset optimization (< 100K): {} records → {} shards, ~{} records/shard (target: 2K-5K) - maximum parallel processing",
-                estimatedRowCount, optimalShardCount, recordsPerShard);
+        log.info("[ENV: {}] Very small dataset optimization (< 100K): {} records → {} shards, ~{} records/shard (target: 2K-5K) - maximum parallel processing",
+                envName, estimatedRowCount, optimalShardCount, recordsPerShard);
         
         return optimalShardCount;
     }
     
     private static int optimizeForSmallMediumDataset(int sizeBasedShardCount, long estimatedRowCount,
                                                      ExecutionEnvironment environment, Integer databasePoolMaxSize) {
+        String envName = environment.cloudProvider.name();
+        
         // Calculate based on records per shard (5K records/shard for fast processing)
         int recordsBasedShardCount = (int) Math.ceil(
                 (double) estimatedRowCount / DatasetScenarioConfig.OPTIMAL_RECORDS_PER_SHARD_SMALL_MEDIUM);
@@ -110,14 +115,16 @@ public final class ScenarioOptimizer {
         optimalShardCount = Math.max(optimalShardCount, minShardsForMaxRecords);
         
         long recordsPerShard = estimatedRowCount / optimalShardCount;
-        log.info("Small-medium dataset optimization (100K-500K): {} records → {} shards, ~{} records/shard (target: 5K-10K) - fast parallel processing",
-                estimatedRowCount, optimalShardCount, recordsPerShard);
+        log.info("[ENV: {}] Small-medium dataset optimization (100K-500K): {} records → {} shards, ~{} records/shard (target: 5K-10K) - fast parallel processing",
+                envName, estimatedRowCount, optimalShardCount, recordsPerShard);
         
         return optimalShardCount;
     }
     
     private static int optimizeForMediumSmallDataset(int sizeBasedShardCount, long estimatedRowCount,
                                                      ExecutionEnvironment environment) {
+        String envName = environment.cloudProvider.name();
+        
         // Calculate based on records per shard (10K records/shard)
         int recordsBasedShardCount = (int) Math.ceil(
                 (double) estimatedRowCount / DatasetScenarioConfig.OPTIMAL_RECORDS_PER_SHARD_MEDIUM_SMALL);
@@ -139,18 +146,20 @@ public final class ScenarioOptimizer {
         // Balance: use records-based but respect worker limits
         if (optimalShardCount > workerBasedShardCount * CostOptimizationConfig.WORKER_SCALING_THRESHOLD) {
             optimalShardCount = Math.min(optimalShardCount, workerBasedShardCount);
-            log.info("Medium-small dataset: worker limit applied, reducing to {} shards", optimalShardCount);
+            log.info("[ENV: {}] Medium-small dataset: worker limit applied, reducing to {} shards", envName, optimalShardCount);
         }
         
         long recordsPerShard = estimatedRowCount / optimalShardCount;
-        log.info("Medium-small dataset optimization (500K-1M): {} records → {} shards, ~{} records/shard (target: 10K-20K) - balanced fast processing",
-                estimatedRowCount, optimalShardCount, recordsPerShard);
+        log.info("[ENV: {}] Medium-small dataset optimization (500K-1M): {} records → {} shards, ~{} records/shard (target: 10K-20K) - balanced fast processing",
+                envName, estimatedRowCount, optimalShardCount, recordsPerShard);
         
         return optimalShardCount;
     }
     
     private static int optimizeForMediumDataset(int sizeBasedShardCount, long estimatedRowCount,
                                                 ExecutionEnvironment environment) {
+        String envName = environment.cloudProvider.name();
+        
         // Calculate based on records per shard (25K records/shard)
         int recordsBasedShardCount = (int) Math.ceil(
                 (double) estimatedRowCount / DatasetScenarioConfig.OPTIMAL_RECORDS_PER_SHARD_MEDIUM);
@@ -171,18 +180,20 @@ public final class ScenarioOptimizer {
         // Balance: use records-based but respect worker limits
         if (optimalShardCount > workerBasedShardCount * CostOptimizationConfig.WORKER_SCALING_THRESHOLD) {
             optimalShardCount = Math.min(optimalShardCount, workerBasedShardCount);
-            log.info("Medium dataset: worker limit applied, reducing to {} shards", optimalShardCount);
+            log.info("[ENV: {}] Medium dataset: worker limit applied, reducing to {} shards", envName, optimalShardCount);
         }
         
         long recordsPerShard = estimatedRowCount / optimalShardCount;
-        log.info("Medium dataset optimization (1M-5M): {} records → {} shards, ~{} records/shard (target: 25K-50K) - balanced cost/performance",
-                estimatedRowCount, optimalShardCount, recordsPerShard);
+        log.info("[ENV: {}] Medium dataset optimization (1M-5M): {} records → {} shards, ~{} records/shard (target: 25K-50K) - balanced cost/performance",
+                envName, estimatedRowCount, optimalShardCount, recordsPerShard);
         
         return optimalShardCount;
     }
     
     private static int optimizeForLargeDataset(int sizeBasedShardCount, long estimatedRowCount,
                                                ExecutionEnvironment environment) {
+        String envName = environment.cloudProvider.name();
+        
         // Calculate optimal shards based on records-per-shard target (50K records/shard)
         int recordsBasedShardCount = (int) Math.ceil(
                 (double) estimatedRowCount / DatasetScenarioConfig.OPTIMAL_RECORDS_PER_SHARD_LARGE);
@@ -207,8 +218,8 @@ public final class ScenarioOptimizer {
         if (workersNeededForRecords > environment.workerCount * CostOptimizationConfig.WORKER_SCALING_THRESHOLD) {
             // Too many workers needed - use worker-based optimization
             optimalShardCount = Math.min(optimalShardCount, workerBasedShardCount);
-            log.info("Large dataset: worker limit applied, reducing to {} shards (fits in {} workers)",
-                    optimalShardCount, environment.workerCount);
+            log.info("[ENV: {}] Large dataset: worker limit applied, reducing to {} shards (fits in {} workers)",
+                    envName, optimalShardCount, environment.workerCount);
         }
         
         // Ensure we don't go below minimum for parallelism
@@ -218,8 +229,8 @@ public final class ScenarioOptimizer {
         optimalShardCount = Math.min(optimalShardCount, sizeBasedShardCount * 2); // Allow some flexibility
         
         long recordsPerShard = estimatedRowCount / optimalShardCount;
-        log.info("Large dataset optimization (5M-10M): {} records → {} shards, ~{} records/shard (target: 50K-100K) - cost-effective with good parallelism",
-                estimatedRowCount, optimalShardCount, recordsPerShard);
+        log.info("[ENV: {}] Large dataset optimization (5M-10M): {} records → {} shards, ~{} records/shard (target: 50K-100K) - cost-effective with good parallelism",
+                envName, estimatedRowCount, optimalShardCount, recordsPerShard);
         
         return optimalShardCount;
     }

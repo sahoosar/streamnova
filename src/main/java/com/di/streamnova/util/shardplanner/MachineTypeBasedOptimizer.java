@@ -26,8 +26,9 @@ public final class MachineTypeBasedOptimizer {
                                                ExecutionEnvironment environment, MachineProfile profile,
                                                Integer databasePoolMaxSize, DataSizeInfo dataSizeInfo) {
         
-        log.info("Machine-type-based optimization starting [{}]: {} vCPUs, {} workers, data-size-based={}, estimated-rows={}",
-                environment.machineType, environment.virtualCpus, environment.workerCount, 
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] Machine-type-based optimization starting [{}]: {} vCPUs, {} workers, data-size-based={}, estimated-rows={}",
+                envName, environment.machineType, environment.virtualCpus, environment.workerCount, 
                 sizeBasedShardCount, estimatedRowCount);
         
         String machineTypeLower = environment.machineType.toLowerCase();
@@ -57,8 +58,8 @@ public final class MachineTypeBasedOptimizer {
             int minShardsForData = calculateMinimumShardsForDataSize(
                     estimatedRowCount, dataSizeInfo, environment);
             if (minShardsForData > machineTypeBasedShardCount) {
-                log.info("Data size requires minimum {} shards (current: {}), adjusting upward", 
-                        minShardsForData, machineTypeBasedShardCount);
+                log.info("[ENV: {}] Data size requires minimum {} shards (current: {}), adjusting upward", 
+                        envName, minShardsForData, machineTypeBasedShardCount);
             }
             machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, minShardsForData);
         }
@@ -70,9 +71,9 @@ public final class MachineTypeBasedOptimizer {
         machineTypeBasedShardCount = Math.min(machineTypeBasedShardCount, maxShardsFromProfile);
         
         if (beforeCapping > maxShardsFromProfile) {
-            log.warn("Data-size-based calculation ({}) exceeds machine type maximum ({} workers × {} vCPUs × {} maxShards/vCPU = {}). " +
+            log.warn("[ENV: {}] Data-size-based calculation ({}) exceeds machine type maximum ({} workers × {} vCPUs × {} maxShards/vCPU = {}). " +
                     "Capping at machine type limit to respect resource constraints.",
-                    beforeCapping, environment.workerCount, environment.virtualCpus, 
+                    envName, beforeCapping, environment.workerCount, environment.virtualCpus, 
                     profile.maxShardsPerVcpu(), maxShardsFromProfile);
         }
         
@@ -83,15 +84,15 @@ public final class MachineTypeBasedOptimizer {
         if (databasePoolMaxSize != null && databasePoolMaxSize > 0) {
             int safePoolCapacity = (int) Math.floor(databasePoolMaxSize * 0.8);
             if (machineTypeBasedShardCount > safePoolCapacity) {
-                log.warn("Shard count ({}) exceeds database pool capacity ({}). Capping at pool limit.",
-                        machineTypeBasedShardCount, safePoolCapacity);
+                log.warn("[ENV: {}] Shard count ({}) exceeds database pool capacity ({}). Capping at pool limit.",
+                        envName, machineTypeBasedShardCount, safePoolCapacity);
             }
             machineTypeBasedShardCount = Math.min(machineTypeBasedShardCount, safePoolCapacity);
         }
         
-        log.info("Machine-type-based optimization [{}]: {} vCPUs, {} workers → {} shards " +
+        log.info("[ENV: {}] Machine-type-based optimization [{}]: {} vCPUs, {} workers → {} shards " +
                 "(data-driven calculation, capped by machine type: max={}, profile-min={})",
-                environment.machineType, environment.virtualCpus, environment.workerCount,
+                envName, environment.machineType, environment.virtualCpus, environment.workerCount,
                 machineTypeBasedShardCount, maxShardsFromProfile, profile.minimumShards());
         
         return machineTypeBasedShardCount;
@@ -118,8 +119,9 @@ public final class MachineTypeBasedOptimizer {
             machineTypeShards = Math.max(machineTypeShards, recordsBasedShards);
         }
         
-        log.info("High-CPU machine optimization: {} vCPUs × {} workers × {} maxShards/vCPU = {} base shards, final = {}",
-                environment.virtualCpus, environment.workerCount, profile.maxShardsPerVcpu(),
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] High-CPU machine optimization: {} vCPUs × {} workers × {} maxShards/vCPU = {} base shards, final = {}",
+                envName, environment.virtualCpus, environment.workerCount, profile.maxShardsPerVcpu(),
                 cpuBasedShards, machineTypeShards);
         
         return machineTypeShards;
@@ -148,8 +150,9 @@ public final class MachineTypeBasedOptimizer {
             machineTypeShards = Math.min(machineTypeShards, Math.min(sizeBasedShardCount, recordsBasedShards));
         }
         
-        log.info("High-Memory machine optimization: {} vCPUs × {} workers × {} maxShards/vCPU = {} base shards, final = {} (preferring fewer shards for memory efficiency)",
-                environment.virtualCpus, environment.workerCount, profile.maxShardsPerVcpu(),
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] High-Memory machine optimization: {} vCPUs × {} workers × {} maxShards/vCPU = {} base shards, final = {} (preferring fewer shards for memory efficiency)",
+                envName, environment.virtualCpus, environment.workerCount, profile.maxShardsPerVcpu(),
                 cpuBasedShards, machineTypeShards);
         
         return machineTypeShards;
@@ -184,8 +187,9 @@ public final class MachineTypeBasedOptimizer {
         // Cap at CPU-based maximum (constraint)
         machineTypeShards = Math.min(machineTypeShards, maxShardsFromCpu);
         
-        log.info("Standard machine optimization: data-based={}, records-based={}, min-parallelism={}, max-from-cpu={}, final={}",
-                sizeBasedShardCount, 
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] Standard machine optimization: data-based={}, records-based={}, min-parallelism={}, max-from-cpu={}, final={}",
+                envName, sizeBasedShardCount, 
                 (estimatedRowCount != null && estimatedRowCount > 0) ? (int) Math.ceil((double) estimatedRowCount / 50_000L) : 0,
                 minShardsForParallelism, maxShardsFromCpu, machineTypeShards);
         

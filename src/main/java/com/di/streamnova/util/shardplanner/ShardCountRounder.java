@@ -10,8 +10,10 @@ public final class ShardCountRounder {
     private ShardCountRounder() {}
     
     public static int roundToOptimalValue(int shardCount, ExecutionEnvironment environment) {
+        String envName = environment.cloudProvider.name();
+        
         if (environment.isLocalExecution) {
-            log.info("Local execution: using exact shard count {} (no power-of-2 rounding)", shardCount);
+            log.info("[ENV: {}] Local execution: using exact shard count {} (no power-of-2 rounding)", envName, shardCount);
             return shardCount;
         }
         
@@ -21,8 +23,8 @@ public final class ShardCountRounder {
         
         // Log if result happens to match vCPU count (coincidence, not forced)
         if (rounded == environment.virtualCpus) {
-            log.info("Rounded shard count {} matches vCPU count {} (coincidental, based on data size calculation)", 
-                    rounded, environment.virtualCpus);
+            log.info("[ENV: {}] Rounded shard count {} matches vCPU count {} (coincidental, based on data size calculation)", 
+                    envName, rounded, environment.virtualCpus);
         }
         
         return rounded;

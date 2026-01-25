@@ -41,8 +41,9 @@ public final class UnifiedCalculator {
         // Round to power of 2 for GCP efficiency
         optimalWorkers = WorkerCountCalculator.roundToOptimalWorkerCount(optimalWorkers);
         
-        log.info("Machine-type-based worker calculation: data={}, max={}, final={}", 
-                workersFromData, maxWorkersFromMachine, optimalWorkers);
+        String envName = environment.cloudProvider.name();
+        log.info("[ENV: {}] Machine-type-based worker calculation: data={}, max={}, final={}", 
+                envName, workersFromData, maxWorkersFromMachine, optimalWorkers);
         
         return optimalWorkers;
     }
@@ -74,9 +75,10 @@ public final class UnifiedCalculator {
             Integer databasePoolMaxSize) {
         
         MachineProfile profile = MachineProfileProvider.getProfile(environment.machineType);
+        String envName = environment.cloudProvider.name();
         
-        log.info("Calculating optimal shards for machine type: {} ({} vCPUs, {} workers)", 
-                environment.machineType, environment.virtualCpus, environment.workerCount);
+        log.info("[ENV: {}] Calculating optimal shards for machine type: {} ({} vCPUs, {} workers)", 
+                envName, environment.machineType, environment.virtualCpus, environment.workerCount);
         
         // STEP 1: Calculate data size
         DataSizeInfo dataSizeInfo = DataSizeCalculator.calculateDataSize(estimatedRowCount, averageRowSizeBytes);
@@ -89,10 +91,10 @@ public final class UnifiedCalculator {
                     : SizeBasedConfig.DEFAULT_TARGET_MB_PER_SHARD;
             sizeBasedShardCount = (int) Math.ceil(dataSizeInfo.totalSizeMb / targetMb);
             sizeBasedShardCount = Math.max(1, sizeBasedShardCount);
-            log.info("Data-size-based calculation: {} MB total → {} shards (target: {} MB per shard)",
-                    String.format("%.2f", dataSizeInfo.totalSizeMb), sizeBasedShardCount, targetMb);
+            log.info("[ENV: {}] Data-size-based calculation: {} MB total → {} shards (target: {} MB per shard)",
+                    envName, String.format("%.2f", dataSizeInfo.totalSizeMb), sizeBasedShardCount, targetMb);
         } else {
-            log.info("Data size information not available, using default size-based shard count: {}", sizeBasedShardCount);
+            log.info("[ENV: {}] Data size information not available, using default size-based shard count: {}", envName, sizeBasedShardCount);
         }
         
         // STEP 3: Apply machine-type-based optimization (considers data size + machine type characteristics)
@@ -111,15 +113,15 @@ public final class UnifiedCalculator {
                 optimizedShardCount, environment, profile, databasePoolMaxSize);
         
         if (beforeFinalConstraints != optimizedShardCount) {
-            log.info("Final constraint application adjusted shard count: {} → {} (machine type limits enforced)",
-                    beforeFinalConstraints, optimizedShardCount);
+            log.info("[ENV: {}] Final constraint application adjusted shard count: {} → {} (machine type limits enforced)",
+                    envName, beforeFinalConstraints, optimizedShardCount);
         }
         
         // STEP 6: Round to optimal value
         optimizedShardCount = ShardCountRounder.roundToOptimalValue(optimizedShardCount, environment);
         
-        log.info("Final shard count for machine type {}: {} shards (data-driven, constrained by machine type: max={})",
-                environment.machineType, optimizedShardCount,
+        log.info("[ENV: {}] Final shard count for machine type {}: {} shards (data-driven, constrained by machine type: max={})",
+                envName, environment.machineType, optimizedShardCount,
                 environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu());
         
         return optimizedShardCount;
