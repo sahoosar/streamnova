@@ -27,7 +27,6 @@ public class PostgreSourceConfig implements SourceConfig {
     @Builder.Default
     private final int fetchSize = 1000; // Default fetch size
     private String upperBoundColumn; // Column name for partitioning
-    private String lowerBoundColumn; // Column name for partitioning
     private Long upperBound; // Numeric upper bound value for partitioning (e.g., max ID or max date timestamp)
     private Long lowerBound; // Numeric lower bound value for partitioning (e.g., min ID or min date timestamp)
     @Builder.Default
@@ -66,13 +65,9 @@ public class PostgreSourceConfig implements SourceConfig {
         if (upperBoundColumn != null && !upperBoundColumn.isBlank()) {
             properties.put("partitionColumn", upperBoundColumn);
             
-            // Use actual numeric bounds if provided, otherwise use column names as fallback (legacy behavior)
+            // Use actual numeric bounds if provided
             if (lowerBound != null) {
                 properties.put("lowerBound", lowerBound);
-            } else if (lowerBoundColumn != null && !lowerBoundColumn.isBlank()) {
-                // Legacy: if only column name provided, log warning and don't set (will fail at runtime)
-                log.warn("lowerBoundColumn '{}' provided but lowerBound value is missing. " +
-                        "JDBC partitioning requires numeric lowerBound value, not column name.", lowerBoundColumn);
             }
             
             if (upperBound != null) {

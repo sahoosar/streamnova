@@ -19,6 +19,15 @@ public final class EnvironmentDetector {
         
         int virtualCpus = detectVirtualCpus(pipelineOptions, machineType);
         int workerCount = detectWorkerCount(pipelineOptions);
+        
+        // Ensure worker count is never 0 for local execution (machineType is null/blank)
+        boolean isLocal = (machineType == null || machineType.isBlank());
+        if (isLocal && workerCount == 0) {
+            int fallbackWorkers = Math.max(1, Runtime.getRuntime().availableProcessors());
+            log.warn("Worker count was 0 for local execution, overriding to {} (available CPU cores)", fallbackWorkers);
+            workerCount = fallbackWorkers;
+        }
+        
         return new ExecutionEnvironment(machineType, virtualCpus, workerCount);
     }
     
@@ -97,27 +106,67 @@ public final class EnvironmentDetector {
     }
     
     private static int detectWorkerCount(PipelineOptions pipelineOptions) {
+        // First, check if we can determine local execution by checking available processors
+        int availableProcessors = Runtime.getRuntime().availableProcessors();
+        if (availableProcessors <= 0) {
+            log.warn("Available processors is {} (invalid), defaulting to 1 worker", availableProcessors);
+            return 1;
+        }
+        
+        // Check if we're running on GCP Dataflow or locally
+        boolean isGcpDataflow = false;
         try {
             DataflowPipelineOptions dataflowOptions = pipelineOptions.as(DataflowPipelineOptions.class);
-            Integer maxWorkers = dataflowOptions.getMaxNumWorkers();
-            Integer baseWorkers = dataflowOptions.getNumWorkers();
+            String project = dataflowOptions.getProject();
+            String region = dataflowOptions.getRegion();
             
-            // If workers are explicitly set, use them
-            if (maxWorkers != null && maxWorkers > 0) {
-                return maxWorkers;
-            }
-            if (baseWorkers != null && baseWorkers > 0) {
-                return baseWorkers;
+            // If project and region are set, we're likely on GCP Dataflow
+            if (project != null && !project.isBlank() && region != null && !region.isBlank()) {
+                isGcpDataflow = true;
+                log.debug("GCP Dataflow detected: project={}, region={}", project, region);
+            } else {
+                log.debug("Local execution detected: project={}, region={}", project, region);
             }
             
-            // If no workers specified, return 0 to indicate "calculate automatically"
-            // This will be handled by calculateOptimalWorkerCount() if needed
-            log.debug("No worker count specified in PipelineOptions, will calculate automatically if needed");
-            return 0;
+            // If workers are explicitly set in PipelineOptions, use them
+            try {
+                Integer maxWorkers = dataflowOptions.getMaxNumWorkers();
+                if (maxWorkers != null && maxWorkers > 0) {
+                    log.debug("Worker count from DataflowPipelineOptions.maxNumWorkers: {}", maxWorkers);
+                    return maxWorkers;
+                }
+            } catch (Exception e) {
+                log.debug("Could not read maxNumWorkers: {}", e.getMessage());
+            }
+            
+            try {
+                Integer baseWorkers = dataflowOptions.getNumWorkers();
+                if (baseWorkers != null && baseWorkers > 0) {
+                    log.debug("Worker count from DataflowPipelineOptions.numWorkers: {}", baseWorkers);
+                    return baseWorkers;
+                }
+            } catch (Exception e) {
+                log.debug("Could not read numWorkers: {}", e.getMessage());
+            }
+            
+            // For GCP Dataflow: return 0 to indicate "calculate automatically"
+            if (isGcpDataflow) {
+                log.debug("GCP Dataflow detected: no worker count specified, will calculate automatically if needed");
+                return 0;
+            }
+            
+            // For local execution: use available CPU cores as default (never return 0)
+            int localWorkers = Math.max(1, availableProcessors);
+            log.info("Local execution detected: using {} workers (based on {} available CPU cores)", 
+                    localWorkers, availableProcessors);
+            return localWorkers;
         } catch (Exception e) {
             log.debug("Failed to detect worker count from PipelineOptions (local execution): {}", e.getMessage());
-            // Local execution: workers concept doesn't apply the same way
-            return 1;
+            // Local execution: use available CPU cores as default (never return 0)
+            int localWorkers = Math.max(1, availableProcessors);
+            log.info("Local execution detected (exception path): using {} workers (based on {} available CPU cores)", 
+                    localWorkers, availableProcessors);
+            return localWorkers;
         }
     }
     

@@ -15,16 +15,17 @@ public final class ShardCountRounder {
             return shardCount;
         }
         
-        // If close to vCPU count, use exact vCPU count
-        if (Math.abs(shardCount - environment.virtualCpus) <= 2 
-                && shardCount >= environment.virtualCpus * 0.8) {
-            log.info("Using exact vCPU count {} instead of power-of-2 rounding (target was {})", 
-                    environment.virtualCpus, shardCount);
-            return environment.virtualCpus;
+        // GCP with larger shard count: use power-of-2 for load balancing
+        // Note: Shards are calculated based on data size, not forced to match vCPU count
+        int rounded = roundToNextPowerOfTwo(shardCount);
+        
+        // Log if result happens to match vCPU count (coincidence, not forced)
+        if (rounded == environment.virtualCpus) {
+            log.info("Rounded shard count {} matches vCPU count {} (coincidental, based on data size calculation)", 
+                    rounded, environment.virtualCpus);
         }
         
-        // GCP with larger shard count: use power-of-2 for load balancing
-        return roundToNextPowerOfTwo(shardCount);
+        return rounded;
     }
     
     private static int roundToNextPowerOfTwo(int n) {

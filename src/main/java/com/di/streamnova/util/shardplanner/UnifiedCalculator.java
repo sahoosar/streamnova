@@ -49,6 +49,22 @@ public final class UnifiedCalculator {
     
     /**
      * Calculates optimal shards based on machine type, workers, and data characteristics.
+     * 
+     * <p><b>Calculation Strategy (when machine type is provided from config):</b></p>
+     * <ol>
+     *   <li><b>Data-Driven Calculation:</b> Calculate shards based on data size (MB) and record count</li>
+     *   <li><b>Machine Type Optimization:</b> Apply machine-type-specific strategies (High-CPU, High-Memory, Standard)</li>
+     *   <li><b>Machine Type Constraints:</b> Cap shards at machine type maximum (workers × vCPUs × maxShardsPerVcpu)</li>
+     *   <li><b>Cost Optimization:</b> Optimize for cost efficiency</li>
+     *   <li><b>Final Constraints:</b> Apply pool size and profile constraints again (defensive)</li>
+     *   <li><b>Rounding:</b> Round to optimal value (power-of-2 for GCP, exact for local)</li>
+     * </ol>
+     * 
+     * <p><b>Key Principle:</b> Data size drives the calculation, but machine type provides the UPPER BOUND constraint.
+     * If data size suggests more shards than the machine can handle, it's capped at the machine type limit.</p>
+     * 
+     * <p><b>Example:</b> If data size suggests 100 shards but machine type (4 workers × 8 vCPUs × 1 maxShards/vCPU = 32 max)
+     * can only handle 32 shards, the result will be capped at 32 shards.</p>
      */
     public static int calculateOptimalShardsForMachineType(
             ExecutionEnvironment environment,
@@ -59,10 +75,13 @@ public final class UnifiedCalculator {
         
         MachineProfile profile = MachineProfileProvider.getProfile(environment.machineType);
         
-        // Calculate data size
+        log.info("Calculating optimal shards for machine type: {} ({} vCPUs, {} workers)", 
+                environment.machineType, environment.virtualCpus, environment.workerCount);
+        
+        // STEP 1: Calculate data size
         DataSizeInfo dataSizeInfo = DataSizeCalculator.calculateDataSize(estimatedRowCount, averageRowSizeBytes);
         
-        // Use machine-type-based optimizer
+        // STEP 2: Calculate size-based shard count from data
         int sizeBasedShardCount = 1;
         if (dataSizeInfo.hasSizeInformation && dataSizeInfo.totalSizeMb != null) {
             double targetMb = (targetMbPerShard != null && targetMbPerShard > 0) 
@@ -70,23 +89,38 @@ public final class UnifiedCalculator {
                     : SizeBasedConfig.DEFAULT_TARGET_MB_PER_SHARD;
             sizeBasedShardCount = (int) Math.ceil(dataSizeInfo.totalSizeMb / targetMb);
             sizeBasedShardCount = Math.max(1, sizeBasedShardCount);
+            log.info("Data-size-based calculation: {} MB total → {} shards (target: {} MB per shard)",
+                    String.format("%.2f", dataSizeInfo.totalSizeMb), sizeBasedShardCount, targetMb);
+        } else {
+            log.info("Data size information not available, using default size-based shard count: {}", sizeBasedShardCount);
         }
         
-        // Use machine-type-based optimization
+        // STEP 3: Apply machine-type-based optimization (considers data size + machine type characteristics)
+        // This method will cap at machine type maximum internally
         int optimizedShardCount = MachineTypeBasedOptimizer.optimizeBasedOnMachineType(
                 sizeBasedShardCount, estimatedRowCount, environment, profile, 
                 databasePoolMaxSize, dataSizeInfo);
         
-        // Apply cost optimization
+        // STEP 4: Apply cost optimization
         optimizedShardCount = CostOptimizer.optimizeForCost(
                 optimizedShardCount, environment, estimatedRowCount);
         
-        // Apply constraints
+        // STEP 5: Apply constraints again (defensive - ensures machine type limits are respected)
+        int beforeFinalConstraints = optimizedShardCount;
         optimizedShardCount = ConstraintApplier.applyConstraints(
                 optimizedShardCount, environment, profile, databasePoolMaxSize);
         
-        // Round to optimal value
+        if (beforeFinalConstraints != optimizedShardCount) {
+            log.info("Final constraint application adjusted shard count: {} → {} (machine type limits enforced)",
+                    beforeFinalConstraints, optimizedShardCount);
+        }
+        
+        // STEP 6: Round to optimal value
         optimizedShardCount = ShardCountRounder.roundToOptimalValue(optimizedShardCount, environment);
+        
+        log.info("Final shard count for machine type {}: {} shards (data-driven, constrained by machine type: max={})",
+                environment.machineType, optimizedShardCount,
+                environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu());
         
         return optimizedShardCount;
     }

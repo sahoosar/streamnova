@@ -137,8 +137,11 @@ public final class ShardPlanner {
             
             if (environment.machineType != null && !environment.machineType.isBlank() && !environment.isLocalExecution) {
                 // Machine type provided → use machine-type-based calculation
+                // NOTE: Calculation is DATA-DRIVEN but CONSTRAINED by machine type limits
+                // Data size determines optimal shards, but machine type provides the maximum cap
                 strategy = "MACHINE_TYPE";
-                log.info("Machine type provided ({}): calculating shards and workers based on machine type", 
+                log.info("Machine type provided ({}): calculating shards and workers based on machine type. " +
+                        "Shards will be calculated from data size but capped at machine type maximum.", 
                         environment.machineType);
                 
                 // Calculate workers first (if not provided)

@@ -26,10 +26,15 @@ public final class MachineTypeBasedOptimizer {
                                                ExecutionEnvironment environment, MachineProfile profile,
                                                Integer databasePoolMaxSize, DataSizeInfo dataSizeInfo) {
         
+        log.info("Machine-type-based optimization starting [{}]: {} vCPUs, {} workers, data-size-based={}, estimated-rows={}",
+                environment.machineType, environment.virtualCpus, environment.workerCount, 
+                sizeBasedShardCount, estimatedRowCount);
+        
         String machineTypeLower = environment.machineType.toLowerCase();
         int machineTypeBasedShardCount;
         
         // Calculate based on machine type characteristics
+        // NOTE: Data size is considered first, then machine type constraints are applied
         if (machineTypeLower.contains("highcpu")) {
             // High-CPU machines: maximize parallelism, more shards per vCPU
             machineTypeBasedShardCount = calculateForHighCpuMachine(
@@ -44,28 +49,50 @@ public final class MachineTypeBasedOptimizer {
                     sizeBasedShardCount, estimatedRowCount, environment, profile, dataSizeInfo);
         }
         
+        log.debug("After machine-type-specific calculation: {} shards", machineTypeBasedShardCount);
+        
         // Apply data size constraints (ensure we have enough shards for the data)
         if (estimatedRowCount != null && estimatedRowCount > 0) {
             // Ensure minimum shards based on data volume
             int minShardsForData = calculateMinimumShardsForDataSize(
                     estimatedRowCount, dataSizeInfo, environment);
+            if (minShardsForData > machineTypeBasedShardCount) {
+                log.info("Data size requires minimum {} shards (current: {}), adjusting upward", 
+                        minShardsForData, machineTypeBasedShardCount);
+            }
             machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, minShardsForData);
         }
         
-        // Cap by machine profile limits
+        // CRITICAL: Cap by machine profile limits (machine type constraint)
+        // Formula: max_shards = workers × vCPUs × maxShardsPerVcpu
         int maxShardsFromProfile = environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
+        int beforeCapping = machineTypeBasedShardCount;
         machineTypeBasedShardCount = Math.min(machineTypeBasedShardCount, maxShardsFromProfile);
+        
+        if (beforeCapping > maxShardsFromProfile) {
+            log.warn("Data-size-based calculation ({}) exceeds machine type maximum ({} workers × {} vCPUs × {} maxShards/vCPU = {}). " +
+                    "Capping at machine type limit to respect resource constraints.",
+                    beforeCapping, environment.workerCount, environment.virtualCpus, 
+                    profile.maxShardsPerVcpu(), maxShardsFromProfile);
+        }
+        
+        // Ensure minimum shards from profile
         machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, profile.minimumShards());
         
         // Cap by database pool (80% headroom)
         if (databasePoolMaxSize != null && databasePoolMaxSize > 0) {
             int safePoolCapacity = (int) Math.floor(databasePoolMaxSize * 0.8);
+            if (machineTypeBasedShardCount > safePoolCapacity) {
+                log.warn("Shard count ({}) exceeds database pool capacity ({}). Capping at pool limit.",
+                        machineTypeBasedShardCount, safePoolCapacity);
+            }
             machineTypeBasedShardCount = Math.min(machineTypeBasedShardCount, safePoolCapacity);
         }
         
-        log.info("Machine-type-based optimization [{}]: {} vCPUs, {} workers → {} shards (profile: min={}, max={})",
+        log.info("Machine-type-based optimization [{}]: {} vCPUs, {} workers → {} shards " +
+                "(data-driven calculation, capped by machine type: max={}, profile-min={})",
                 environment.machineType, environment.virtualCpus, environment.workerCount,
-                machineTypeBasedShardCount, profile.minimumShards(), maxShardsFromProfile);
+                machineTypeBasedShardCount, maxShardsFromProfile, profile.minimumShards());
         
         return machineTypeBasedShardCount;
     }
@@ -135,22 +162,32 @@ public final class MachineTypeBasedOptimizer {
     private static int calculateForStandardMachine(int sizeBasedShardCount, Long estimatedRowCount,
                                                     ExecutionEnvironment environment, MachineProfile profile,
                                                     DataSizeInfo dataSizeInfo) {
-        // Standard: Use vCPUs × shardsPerVcpu × workers
-        int cpuBasedShards = environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
+        // Standard: Calculate based on data size first, vCPUs is a constraint (max), not a target
+        int machineTypeShards = sizeBasedShardCount;
         
-        // Balance between size-based and CPU-based
-        int machineTypeShards = Math.max(sizeBasedShardCount, cpuBasedShards);
+        // Calculate CPU-based maximum (this is a constraint, not a target)
+        int maxShardsFromCpu = environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
         
         if (estimatedRowCount != null && estimatedRowCount > 0) {
             // Standard machines: balanced records per shard
             long targetRecordsPerShard = 50_000L; // Balanced for standard
             int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecordsPerShard);
-            machineTypeShards = Math.max(machineTypeShards, recordsBasedShards);
+            // Use data-based calculation (size or records), not CPU-based
+            machineTypeShards = Math.max(sizeBasedShardCount, recordsBasedShards);
         }
         
-        log.info("Standard machine optimization: {} vCPUs × {} workers × {} maxShards/vCPU = {} base shards, final = {}",
-                environment.virtualCpus, environment.workerCount, profile.maxShardsPerVcpu(),
-                cpuBasedShards, machineTypeShards);
+        // vCPUs is a maximum constraint, not a minimum target
+        // Only use CPU-based calculation if data-based is too small (below minimum)
+        int minShardsForParallelism = Math.max(1, environment.virtualCpus / 2); // At least half vCPUs for parallelism
+        machineTypeShards = Math.max(machineTypeShards, minShardsForParallelism);
+        
+        // Cap at CPU-based maximum (constraint)
+        machineTypeShards = Math.min(machineTypeShards, maxShardsFromCpu);
+        
+        log.info("Standard machine optimization: data-based={}, records-based={}, min-parallelism={}, max-from-cpu={}, final={}",
+                sizeBasedShardCount, 
+                (estimatedRowCount != null && estimatedRowCount > 0) ? (int) Math.ceil((double) estimatedRowCount / 50_000L) : 0,
+                minShardsForParallelism, maxShardsFromCpu, machineTypeShards);
         
         return machineTypeShards;
     }

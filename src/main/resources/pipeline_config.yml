@@ -1,28 +1,157 @@
 pipeline:
   config:
     source:
-      type: postgres
-      driver: org.postgresql.Driver
-      jdbcUrl: jdbc:postgresql://localhost:5432/marketdb
-      username: saroj
-      password: admin
-      table: market_summary
-      fetchSize: 5000     # tune as needed
-      upperBoundColumn:
-      numPartitions: 0      # calculate based on data size
-      maxColumns: 3
-      maximumPoolSize: 16
-      minimumIdle: 4
-      idleTimeout: 300000 #ms
-      connectionTimeout: 300000 #ms
-      maxLifetime: 1800000 #ms
-      # Resource Configuration (REQUIRED - use 0 for auto-calculation based on machine type)
-      shards: 0      # REQUIRED - shard count (0 = calculate automatically based on machine type and data size)
-      workers: 0     # REQUIRED - worker count (0 = calculate automatically based on machine type and data size)
-      machineType:   # REQUIRED - machine type (e.g., "n2-standard-4", "n2-highcpu-8", "n2-highmem-4")
-                     #           If not provided, will detect from PipelineOptions or use record-count scenarios
-      partitions: 0  # optional - legacy support (same as shards)
-      fetchFactor: 1.0 # optional (e.g., 1.25)
+      # ============================================================================
+      # Database Connection Configuration
+      # ============================================================================
+      type: postgres                    # Database type: postgres, oracle, mysql
+      driver: org.postgresql.Driver     # JDBC driver class name
+      jdbcUrl: jdbc:postgresql://localhost:5432/marketdb  # JDBC connection URL
+      username: saroj                   # Database username
+      password: admin                   # Database password (will be sanitized in logs)
+      table: market_summary             # Table name (supports schema.table format, e.g., "public.users")
+                                       # ✅ Validated: Table name format, SQL injection prevention, table existence check
+      
+      # ============================================================================
+      # Schema Detection Configuration
+      # ============================================================================
+      maxColumns: 0                     # Maximum number of columns to include in schema (0 = unlimited, recommended for production)
+                                       # ✅ Robust validation: Table existence, column name security, duplicate detection
+                                       # ✅ Auto-detection: Data types, nullable information, type mapping
+                                       # Note: System validates table exists before querying columns
+                                       # Recommendation: Use 0 (unlimited) for production to include all columns
+                                       # Use a specific number (e.g., 10, 50) only for testing or when you need to limit schema size
+      
+      # ============================================================================
+      # Sharding Strategy Configuration
+      # ============================================================================
+      # Priority 1: Hash-based sharding (fastest, most stable)
+      upperBoundColumn:                 # optional - Primary shard column for HASH-BASED sharding
+                                       # Use when: You want hash-based sharding for performance-critical scenarios
+                                       # Priority: Highest (checked first)
+                                       # Result: Fast hash-based sharding using MD5 hash of column value
+                                       # ✅ Validated: Column name security, SQL injection prevention
+                                       # Example: "user_id", "order_id", "transaction_id"
+                                       # 
+                                       # 🔍 Partition Value Filtering:
+                                       # When used with partitionValue, filters data by specific partition value
+                                       # Auto-detects column type and formats value appropriately
+                                       # Example: upperBoundColumn: "created_date", partitionValue: "2024-01-15"
+                                       # Result: Reads only data where created_date = DATE '2024-01-15'
+                                       # Example: upperBoundColumn: "region_id", partitionValue: "5"
+                                       # Result: Reads only data where region_id = 5
+      
+      partitionValue:                   # optional - Partition value to filter data (supports any data type: date, integer, string, etc.)
+                                       # Use when: Table is partitioned and you want to read only a specific partition
+                                       # Format: Value format depends on column data type (auto-detected):
+                                       #   - Date: "2024-01-15", "2024/01/15", "15-01-2024", etc. (supports multiple formats)
+                                       #   - Integer/BigInt: "12345", "1000000" (no quotes)
+                                       #   - String/Varchar: "partition_2024_01", "region_east" (quoted automatically)
+                                       #   - Timestamp: "2024-01-15 10:30:00" or "2024-01-15"
+                                       #   - Boolean: "true", "false", "1", "0", "yes", "no"
+                                       # Requires: upperBoundColumn must be set to the partition column name
+                                       # ✅ Validated: Column type detection, value formatting, SQL injection prevention
+                                       # ✅ Auto-detects column type and formats value appropriately
+                                       # Examples:
+                                       #   - Date partition: upperBoundColumn: "created_date", partitionValue: "2024-01-15"
+                                       #   - Integer partition: upperBoundColumn: "region_id", partitionValue: "5"
+                                       #   - String partition: upperBoundColumn: "region_name", partitionValue: "east"
+                                       # Note: If partitionValue is provided without upperBoundColumn, filter is skipped with warning
+      
+      # Priority 3: ROW_NUMBER() sharding (stable, slightly slower)
+      shardColumn: session_id           # optional - Fallback shard/ordering column for ROW_NUMBER() sharding
+                                       # Use when: Table has NO primary key/index, and you want to specify which column to use
+                                       # Do NOT use when: Table has PK/index (system will auto-detect) or performance is critical
+                                       # Priority: Only used when no stable keys (PK/index) are found
+                                       # Result: Stable ROW_NUMBER() sharding (slightly slower than hash-based)
+                                       # ✅ Validated: Column name security, type validation (numeric/timestamp recommended)
+                                       # ⚠️ Warning: If column is not numeric/timestamp, system will warn but still work
+                                       # Can be overridden via command line: --pipeline.config.source.shardColumn=column_name
+                                       # If not provided, system will auto-detect a suitable column for ROW_NUMBER() sharding
+      
+      orderBy:                          # optional - List of columns for ORDER BY clause
+                                       # Format: ["created_at", "id"] or null/empty
+                                       # Used for custom ordering in queries (if needed)
+                                       # Example: ["created_at", "id"]
+      
+      # ============================================================================
+      # Data Reading Configuration
+      # ============================================================================
+      fetchSize: 5000                   # Number of rows to fetch per ResultSet iteration
+                                       # Tune based on: row size, memory, network bandwidth
+                                       # Recommended: 1000-10000 for most cases
+                                       # ✅ Adaptive: System adjusts fetch size for large datasets automatically
+      
+      fetchFactor: 1.0                  # optional - Fetch size multiplier (e.g., 1.25 for 25% increase)
+                                       # Used for fine-tuning fetch size based on data characteristics
+      
+      # ============================================================================
+      # Connection Pool Configuration
+      # ============================================================================
+      maximumPoolSize: 16               # Maximum number of connections in the pool
+                                       # Recommended: Match your database max_connections limit
+                                       # ✅ Validated: Pool size bounds (1-1000)
+      
+      minimumIdle: 4                    # Minimum number of idle connections to maintain
+                                       # Recommended: 25-50% of maximumPoolSize
+      
+      idleTimeout: 300000               # Time (ms) before idle connections are removed
+                                       # Default: 300000 (5 minutes)
+      
+      connectionTimeout: 300000         # Time (ms) to wait for a connection from the pool
+                                       # Default: 300000 (5 minutes)
+      
+      maxLifetime: 1800000              # Maximum lifetime (ms) of a connection in the pool
+                                       # Default: 1800000 (30 minutes)
+                                       # Recommended: Set to less than database connection timeout
+      
+      # ============================================================================
+      # Timeout Configuration (for large datasets)
+      # ============================================================================
+      queryTimeout:                     # optional - Query timeout in seconds (null = no timeout)
+                                       # Recommended: 3600 (1 hour) for huge datasets
+                                       # Prevents queries from hanging indefinitely
+                                       # ✅ Applied: Set via PreparedStatement.setQueryTimeout()
+      
+      socketTimeout:                    # optional - Socket timeout in seconds (null = no timeout)
+                                       # Recommended: 300 (5 minutes) for large datasets
+                                       # Controls network operation timeouts
+                                       # Note: Typically set at JDBC URL level or connection string
+      
+      statementTimeout:                 # optional - PostgreSQL statement timeout in seconds (null = no timeout)
+                                       # Recommended: 3600 (1 hour) for huge partition column datasets
+                                       # Set via SET statement_timeout in PostgreSQL session
+                                       # ✅ Applied: Executed as "SET statement_timeout = <value * 1000>" per shard
+      
+      enableProgressLogging: true       # optional - Enable progress logging for large datasets (default: true)
+                                       # Set to false to reduce log volume for very large tables (>100M rows)
+                                       # ✅ Progress: Logs "Shard X progress: read Y rows so far..." every 30 seconds
+      
+      # ============================================================================
+      # Resource Allocation Configuration
+      # ============================================================================
+      # IMPORTANT: Use 0 for auto-calculation based on machine type and data size
+      # System will validate user-provided values against machine type resources
+      
+      shards: 0                         # REQUIRED - Shard count (0 = calculate automatically)
+                                       # Auto-calculation considers: machine type, data size, record count
+                                       # ✅ Validated: User values compared with machine type capabilities
+                                       # If user provides value > machine capacity, system adjusts to max available
+                                       # Example: 0 (auto), 4, 8, 16, 32
+      
+      workers: 0                        # REQUIRED - Worker count (0 = calculate automatically)
+                                       # Auto-calculation considers: machine type, vCPU count, data size
+                                       # ✅ Validated: User values compared with machine type capabilities
+                                       # If user provides value > machine capacity, system adjusts to max available
+                                       # Example: 0 (auto), 2, 4, 8, 16
+      
+      machineType:                      # REQUIRED - Machine type for resource optimization
+                                       # If not provided, will detect from PipelineOptions or use record-count scenarios
+                                       # Examples:
+                                       #   GCP: "n2-standard-4", "n2-highcpu-8", "n2-highmem-4"
+                                       #   Local: Auto-detected from available processors
+                                       # ✅ Priority: Machine type takes precedence over record-count scenarios
+                                       # ✅ Optimization: High-CPU, High-Memory, Standard strategies applied automatically
     intermediate:
       dataFormat: parquet
       gcsPath: gs://my-bucket/stage/employees/
