@@ -34,7 +34,8 @@ public class PipelineConfigSource {
                                      // Can be overridden via command line: --pipeline.config.source.shardColumn=column_name
     private int maxColumns;
     private List<String> orderBy;
-    private int maximumPoolSize;
+    private int maximumPoolSize = 8;  // default 8; when machineType missing use this, else use fallbackPoolSize if 0
+    private int fallbackPoolSize = 8; // when machineType missing AND maximumPoolSize=0; also when vCPUs cannot be parsed
     private int minimumIdle;
     private long idleTimeout ;      //  ms
     private long connectionTimeout; // ms

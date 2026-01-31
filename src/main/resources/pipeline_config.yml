@@ -88,12 +88,11 @@ pipeline:
       # ============================================================================
       # Connection Pool Configuration
       # ============================================================================
-      maximumPoolSize: 16               # Maximum number of connections in the pool
-                                       # Recommended: Match your database max_connections limit
-                                       # ✅ Validated: Pool size bounds (1-1000)
+      maximumPoolSize: 8              # Default 8. When machineType missing: use this (or fallbackPoolSize if 0)
       
-      minimumIdle: 4                    # Minimum number of idle connections to maintain
-                                       # Recommended: 25-50% of maximumPoolSize
+      fallbackPoolSize: 8             # When machineType missing AND maximumPoolSize=0; also when vCPUs cannot be parsed
+      
+      minimumIdle: 2                  # Idle connections to keep warm (must be ≤ maximumPoolSize)
       
       idleTimeout: 300000               # Time (ms) before idle connections are removed
                                        # Default: 300000 (5 minutes)

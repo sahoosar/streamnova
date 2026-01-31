@@ -11,6 +11,7 @@ import com.di.streamnova.util.HikariDataSource;
 import com.di.streamnova.util.InputValidator;
 import com.di.streamnova.util.MetricsCollector;
 import com.di.streamnova.util.TypeConverter;
+import com.di.streamnova.util.shardplanner.PoolSizeCalculator;
 import com.di.streamnova.util.shardplanner.ShardPlanner;
 import com.di.streamnova.util.shardplanner.ShardWorkerPlan;
 import lombok.RequiredArgsConstructor;
@@ -78,10 +79,11 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             log.info("Estimated table statistics: rowCount={}, avgRowSizeBytes={}", 
                     stats.rowCount(), stats.avgRowSizeBytes());
             
-            // 4. Calculate shard count using ShardPlanner
+            // 4. Calculate shard count using ShardPlanner (use dbConfig values for pool consistency)
             ShardWorkerPlan plan = ShardPlanner.calculateOptimalShardWorkerPlan(
                     pipeline.getOptions(),
-                    config.getMaximumPoolSize(),
+                    dbConfig.maximumPoolSize(),
+                    dbConfig.minimumIdle(),
                     stats.rowCount(),
                     stats.avgRowSizeBytes(),
                     null, // targetMbPerShard - use default
@@ -156,13 +158,20 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     }
 
     private DbConfigSnapshot createDbConfigSnapshot(PipelineConfigSource config) {
+        int maxPoolSize = PoolSizeCalculator.calculate(
+                config.getMaximumPoolSize(),
+                config.getFallbackPoolSize(),
+                config.getMachineType());
+        int minIdle = config.getMinimumIdle() > 0
+                ? Math.min(config.getMinimumIdle(), maxPoolSize)
+                : Math.min(4, maxPoolSize);
         return new DbConfigSnapshot(
                 config.getJdbcUrl(),
                 config.getUsername(),
                 config.getPassword(),
                 config.getDriver() != null ? config.getDriver() : "org.postgresql.Driver",
-                config.getMaximumPoolSize() > 0 ? config.getMaximumPoolSize() : 16,
-                config.getMinimumIdle() > 0 ? config.getMinimumIdle() : 4,
+                maxPoolSize,
+                minIdle,
                 config.getIdleTimeout() > 0 ? config.getIdleTimeout() : 300000L,
                 config.getConnectionTimeout() > 0 ? config.getConnectionTimeout() : 300000L,
                 config.getMaxLifetime() > 0 ? config.getMaxLifetime() : 1800000L

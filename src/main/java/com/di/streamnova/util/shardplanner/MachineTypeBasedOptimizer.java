@@ -77,8 +77,9 @@ public final class MachineTypeBasedOptimizer {
                     profile.maxShardsPerVcpu(), maxShardsFromProfile);
         }
         
-        // Ensure minimum shards from profile
-        machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, profile.minimumShards());
+        // Ensure minimum shards from profile, but never exceed machine type cap
+        int effectiveMinShards = Math.min(profile.minimumShards(), maxShardsFromProfile);
+        machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, effectiveMinShards);
         
         // Cap by database pool (80% headroom)
         if (databasePoolMaxSize != null && databasePoolMaxSize > 0) {

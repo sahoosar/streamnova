@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import javax.sql.DataSource;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Thread-safe DataSource manager that supports multiple database connections.
@@ -25,6 +26,9 @@ public enum HikariDataSource {
      * This allows multiple different database connections to coexist.
      */
     private final ConcurrentMap<String, DataSource> dataSourceCache = new ConcurrentHashMap<>();
+
+    /** Incrementing counter for stable, positive pool IDs (consistent across runs for monitoring). */
+    private static final AtomicInteger poolIdCounter = new AtomicInteger(0);
 
     /**
      * Gets or creates a DataSource for the given database configuration.
@@ -50,13 +54,34 @@ public enum HikariDataSource {
             hikariConfig.setIdleTimeout(snapshot.idleTimeoutMs());
             hikariConfig.setConnectionTimeout(snapshot.connectionTimeoutMs());
             hikariConfig.setMaxLifetime(snapshot.maxLifetimeMs());
-            
-            // Set pool name for monitoring/debugging
-            hikariConfig.setPoolName("HikariPool-" + connectionKey.hashCode());
-            
+
+            // Dataflow-safe settings: improve stability for workers
+            hikariConfig.setAutoCommit(false);
+            hikariConfig.setInitializationFailTimeout(-1);
+
+            // Optional: PostgreSQL TCP keep-alive (helps with long-running connections)
+            if (snapshot.jdbcUrl() != null && snapshot.jdbcUrl().contains("postgresql")) {
+                hikariConfig.addDataSourceProperty("tcpKeepAlive", "true");
+            }
+
+            // Optional: leak detection for debugging (set -DHikariCP.leakDetectionThreshold=60000 to enable)
+            String leakThreshold = System.getProperty("HikariCP.leakDetectionThreshold");
+            if (leakThreshold != null && !leakThreshold.isEmpty()) {
+                try {
+                    hikariConfig.setLeakDetectionThreshold(Long.parseLong(leakThreshold));
+                } catch (NumberFormatException ignored) { /* use default */ }
+            }
+
+            // Set pool name for monitoring (stable, positive ID + readable short key, no password)
+            String shortKey = generateShortPoolKey(snapshot);
+            hikariConfig.setPoolName("HikariPool-" + poolIdCounter.incrementAndGet() + "-" + shortKey);
+
             DataSource newDataSource = new com.zaxxer.hikari.HikariDataSource(hikariConfig);
-            log.info("Successfully Created HikariCP DataSource : {}", connectionKey);
-            
+            log.info("[POOL] Startup | Created HikariCP pool: {} | maxSize={}, minIdle={} | "
+                    + "Connections at creation: 0 (lazy - created on first use)",
+                    connectionKey, snapshot.maximumPoolSize(), snapshot.minimumIdle());
+            ConnectionPoolLogger.logPoolStats(newDataSource, "after pool creation");
+
             return newDataSource;
         });
     }
@@ -76,8 +101,34 @@ public enum HikariDataSource {
     }
 
     /**
+     * Generates a short, readable pool key for monitoring (no password).
+     * Extracts host, database, and username from JDBC URL.
+     */
+    private String generateShortPoolKey(DbConfigSnapshot snapshot) {
+        String url = snapshot.jdbcUrl();
+        String user = snapshot.username() != null ? snapshot.username() : "unknown";
+        if (url == null || url.isBlank()) {
+            return user.replaceAll("[^a-zA-Z0-9_]", "_");
+        }
+        // Remove password before parsing
+        String safeUrl = url.replaceAll("password=[^;&]+", "password=***");
+        // Extract host:port and database from jdbc:subprotocol://host:port/db
+        String part = safeUrl;
+        int slashSlash = safeUrl.indexOf("//");
+        if (slashSlash >= 0) {
+            part = safeUrl.substring(slashSlash + 2);
+        }
+        int slashDb = part.indexOf("/");
+        String hostPort = slashDb >= 0 ? part.substring(0, slashDb) : part;
+        String db = slashDb >= 0 && slashDb < part.length() - 1 ? part.substring(slashDb + 1).split("[?;]")[0] : "";
+        String host = hostPort.split(":")[0];
+        String safe = (host + "_" + db + "_" + user).replaceAll("[^a-zA-Z0-9_]", "_").replaceAll("_+", "_");
+        return safe.isEmpty() ? "pool" : safe;
+    }
+
+    /**
      * Sanitizes JDBC URL for logging (removes sensitive information like passwords).
-     * 
+     *
      * @param jdbcUrl The JDBC URL to sanitize
      * @return Sanitized URL safe for logging
      */
@@ -92,7 +143,9 @@ public enum HikariDataSource {
     /**
      * Closes and removes a DataSource from the cache.
      * Useful for cleanup or reconnection scenarios.
-     * 
+     * <p><b>Dataflow note:</b> On Dataflow workers, shutdown is not always graceful; this method is rarely called.
+     * Do not rely on it for correctness (e.g. for transaction commit or connection release guarantees).
+     *
      * @param snapshot Database configuration snapshot
      */
     public void closeDataSource(DbConfigSnapshot snapshot) {
@@ -111,7 +164,9 @@ public enum HikariDataSource {
 
     /**
      * Closes all DataSources and clears the cache.
-     * Useful for application shutdown.
+     * Useful for application shutdown (e.g. local runs, Spring shutdown hooks).
+     * <p><b>Dataflow note:</b> On Dataflow workers, shutdown is not always graceful; closeAll() is rarely invoked.
+     * Do not rely on it for correctness—design for abrupt worker termination.
      */
     public void closeAll() {
         log.info("Closing all DataSources (count: {})", dataSourceCache.size());

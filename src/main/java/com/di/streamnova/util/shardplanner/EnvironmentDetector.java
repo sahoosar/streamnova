@@ -29,18 +29,31 @@ public final class EnvironmentDetector {
     private EnvironmentDetector() {}
     
     /**
-     * Detects if the pipeline is running on GCP Dataflow.
-     * 
+     * Detects if the pipeline will run on GCP Dataflow.
+     * <p>Uses the actual runner (DataflowRunner vs DirectRunner), not just project/region.
+     * Project and region can be auto-inferred from gcloud even when running locally with DirectRunner.
+     *
      * @param pipelineOptions Pipeline options
-     * @return true if GCP Dataflow is detected (project and region are set), false otherwise
+     * @return true if DataflowRunner is used and project/region are set, false otherwise
      */
     public static boolean isGcpDataflow(PipelineOptions pipelineOptions) {
+        if (pipelineOptions == null) {
+            return false;
+        }
         try {
+            Class<?> runner = pipelineOptions.getRunner();
+            if (runner == null) {
+                return false;
+            }
+            String runnerName = runner.getName();
+            // Must be DataflowRunner — DirectRunner with gcloud config still has project/region set
+            if (!runnerName.contains("DataflowRunner")) {
+                log.debug("[ENV: DETECTING] Runner is {} (not DataflowRunner) — treating as local", runnerName);
+                return false;
+            }
             DataflowPipelineOptions dataflowOptions = pipelineOptions.as(DataflowPipelineOptions.class);
             String project = dataflowOptions.getProject();
             String region = dataflowOptions.getRegion();
-            
-            // If project and region are set, we're on GCP Dataflow
             return project != null && !project.isBlank() && region != null && !region.isBlank();
         } catch (Exception e) {
             log.debug("Failed to detect GCP Dataflow: {}", e.getMessage());

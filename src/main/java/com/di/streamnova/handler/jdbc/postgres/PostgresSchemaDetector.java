@@ -2,6 +2,7 @@ package com.di.streamnova.handler.jdbc.postgres;
 
 import com.di.streamnova.config.PipelineConfigSource;
 import com.di.streamnova.handler.jdbc.postgres.PostgresDataQualityChecker;
+import com.di.streamnova.util.ConnectionPoolLogger;
 import com.di.streamnova.util.InputValidator;
 import com.di.streamnova.util.MetricsCollector;
 import com.di.streamnova.util.TypeConverter;
@@ -156,7 +157,8 @@ public final class PostgresSchemaDetector {
             
             log.info("Successfully detected schema for table '{}': {} fields detected in {}ms", 
                     tableName, fields.size(), duration);
-            
+            ConnectionPoolLogger.logPoolStats(dataSource, "after schema detection (1 conn used)");
+
             return schema;
             
         } catch (SQLException e) {

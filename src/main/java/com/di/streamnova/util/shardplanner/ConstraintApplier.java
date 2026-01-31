@@ -15,13 +15,14 @@ public final class ConstraintApplier {
                 ? poolCapacity : Math.max(1, (int) Math.floor(poolCapacity * 0.8));
         
         // Apply profile constraints
-        int maxShardsFromProfile = environment.isLocalExecution
-                ? Math.max(profile.minimumShards(), environment.virtualCpus * profile.maxShardsPerVcpu())
-                : Math.max(profile.minimumShards(), 
-                        environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu());
+        // Machine type max is the hard limit (workers × vCPUs × maxShardsPerVcpu)
+        int machineTypeMax = environment.isLocalExecution
+                ? environment.virtualCpus * profile.maxShardsPerVcpu()
+                : environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
+        int effectiveMinShards = Math.min(profile.minimumShards(), machineTypeMax);
         
-        int constrainedShardCount = Math.min(shardCount, maxShardsFromProfile);
-        constrainedShardCount = Math.max(constrainedShardCount, profile.minimumShards());
+        int constrainedShardCount = Math.min(shardCount, machineTypeMax);
+        constrainedShardCount = Math.max(constrainedShardCount, effectiveMinShards);
         constrainedShardCount = Math.min(constrainedShardCount, safePoolCapacity);
         
         return constrainedShardCount;

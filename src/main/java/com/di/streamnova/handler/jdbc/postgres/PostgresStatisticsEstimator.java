@@ -1,6 +1,7 @@
 package com.di.streamnova.handler.jdbc.postgres;
 
 import com.di.streamnova.config.PipelineConfigSource;
+import com.di.streamnova.util.ConnectionPoolLogger;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.sql.DataSource;
@@ -47,7 +48,8 @@ public final class PostgresStatisticsEstimator {
             
             log.info("Table statistics estimated: table='{}.{}', rowCount={}, avgRowSizeBytes={}", 
                     schemaName, tableNameOnly, rowCount, avgRowSize);
-            
+            ConnectionPoolLogger.logPoolStats(dataSource, "after statistics (1 conn used)");
+
             return new TableStatistics(rowCount, avgRowSize);
             
         } catch (SQLException e) {
