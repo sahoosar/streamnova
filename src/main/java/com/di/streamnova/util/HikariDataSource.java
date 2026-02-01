@@ -5,6 +5,12 @@ import com.zaxxer.hikari.HikariConfig;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,13 +50,17 @@ public enum HikariDataSource {
             log.info("Creating new HikariCP DataSource for connection: {} (user: {})", 
                     sanitizeUrl(snapshot.jdbcUrl()), snapshot.username());
             
+            int configMaxPool = snapshot.maximumPoolSize();
+            int effectivePoolSize = validateAndResolvePoolSize(snapshot, configMaxPool);
+            int effectiveMinIdle = Math.min(snapshot.minimumIdle(), effectivePoolSize);
+
             HikariConfig hikariConfig = new HikariConfig();
             hikariConfig.setJdbcUrl(snapshot.jdbcUrl());
             hikariConfig.setUsername(snapshot.username());
             hikariConfig.setPassword(snapshot.password());
             hikariConfig.setDriverClassName(snapshot.driverClassName());
-            hikariConfig.setMaximumPoolSize(snapshot.maximumPoolSize());
-            hikariConfig.setMinimumIdle(snapshot.minimumIdle());
+            hikariConfig.setMaximumPoolSize(effectivePoolSize);
+            hikariConfig.setMinimumIdle(effectiveMinIdle);
             hikariConfig.setIdleTimeout(snapshot.idleTimeoutMs());
             hikariConfig.setConnectionTimeout(snapshot.connectionTimeoutMs());
             hikariConfig.setMaxLifetime(snapshot.maxLifetimeMs());
@@ -76,12 +86,15 @@ public enum HikariDataSource {
             String shortKey = generateShortPoolKey(snapshot);
             hikariConfig.setPoolName("HikariPool-" + poolIdCounter.incrementAndGet() + "-" + shortKey);
 
-            DataSource newDataSource = new com.zaxxer.hikari.HikariDataSource(hikariConfig);
-            log.info("[POOL] Startup | Created HikariCP pool: {} | maxSize={}, minIdle={} | "
-                    + "Connections at creation: 0 (lazy - created on first use)",
-                    connectionKey, snapshot.maximumPoolSize(), snapshot.minimumIdle());
-            ConnectionPoolLogger.logPoolStats(newDataSource, "after pool creation");
+            com.zaxxer.hikari.HikariDataSource newDataSource = new com.zaxxer.hikari.HikariDataSource(hikariConfig);
 
+            log.info("[POOL] Creating | connectionKey={} | config maxPoolSize={} | effective maxPoolSize={}, minIdle={}",
+                    sanitizeUrl(snapshot.jdbcUrl()), configMaxPool, effectivePoolSize, effectiveMinIdle);
+
+            // Calibrate as backup if validation missed an edge case
+            calibratePoolSize(newDataSource, connectionKey, effectivePoolSize, effectiveMinIdle, snapshot.jdbcUrl());
+
+            ConnectionPoolLogger.logPoolStats(newDataSource, "after calibration (final)");
             return newDataSource;
         });
     }
@@ -193,5 +206,305 @@ public enum HikariDataSource {
      */
     public int getActiveConnectionCount() {
         return dataSourceCache.size();
+    }
+
+    /** Fraction of DB-available connections to use when availability < config (60%). */
+    private static final double CONNECTION_LIMIT_SAFETY_RATIO = 0.6;
+
+    /**
+     * Validates DB connection availability before pool creation.
+     * If available slots &lt; config maximumPoolSize, uses 60% of available (DB-safe).
+     *
+     * @param snapshot      DbConfigSnapshot with connection details
+     * @param configMaxPool maximumPoolSize from pipeline_config.yml
+     * @return effective pool size to use (config value or 60% of available)
+     */
+    private int validateAndResolvePoolSize(DbConfigSnapshot snapshot, int configMaxPool) {
+        if (configMaxPool <= 0) return configMaxPool;
+        try {
+            loadDriver(snapshot.driverClassName());
+            try (Connection conn = DriverManager.getConnection(
+                    snapshot.jdbcUrl(), snapshot.username(), snapshot.password())) {
+                log.debug("[POOL] Validation | One-off connection OK, querying free connections in DB");
+                int available = queryAvailableConnections(conn, snapshot.jdbcUrl());
+                if (available <= 0) {
+                    log.error("[POOL] Validation | Could not query free connections (max_connections/current) | "
+                            + "using config maxPoolSize={} | Verify DB supports SHOW/status queries", configMaxPool);
+                    return configMaxPool;
+                }
+                if (available < configMaxPool) {
+                    int effective = Math.max(1, (int) Math.floor(available * CONNECTION_LIMIT_SAFETY_RATIO));
+                    log.info("[POOL] Validation | DB free connections ({}) < config maxPoolSize ({}) | "
+                            + "using 60% of available = {}", available, configMaxPool, effective);
+                    return effective;
+                }
+                log.debug("[POOL] Validation | DB free connections ({}) >= config maxPoolSize ({}) | using config", available, configMaxPool);
+                return configMaxPool;
+            }
+        } catch (Exception e) {
+            log.warn("[POOL] Validation | Unable to connect for availability check | url={} | user={} | "
+                    + "error={} | Using config maxPoolSize={} | Verify: JDBC URL, credentials, network, DB is up",
+                    sanitizeUrl(snapshot.jdbcUrl()), snapshot.username(), e.getMessage(), configMaxPool, e);
+            return configMaxPool;
+        }
+    }
+
+    private void loadDriver(String driverClassName) throws ClassNotFoundException {
+        Class.forName(driverClassName != null && !driverClassName.isBlank() ? driverClassName : "org.postgresql.Driver");
+    }
+
+    /**
+     * Queries available connection slots: max_connections - current connections.
+     * Returns -1 if query fails.
+     */
+    private int queryAvailableConnections(Connection conn, String jdbcUrl) {
+        try {
+            if (jdbcUrl != null && jdbcUrl.contains("postgresql")) {
+                int maxConn = -1;
+                int current = -1;
+                try (Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery("SHOW max_connections")) {
+                    if (rs.next()) maxConn = Integer.parseInt(rs.getString(1).trim());
+                }
+                try (Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery("SELECT count(*) FROM pg_stat_activity")) {
+                    if (rs.next()) current = rs.getInt(1);
+                }
+                if (maxConn > 0 && current >= 0) {
+                    int free = Math.max(0, maxConn - current);
+                    log.debug("[POOL] Validation | PostgreSQL: max_connections={}, current={}, free={}", maxConn, current, free);
+                    return free;
+                }
+            } else if (jdbcUrl != null && jdbcUrl.contains("mysql")) {
+                int maxConn = -1;
+                try (Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery("SHOW VARIABLES LIKE 'max_connections'")) {
+                    if (rs.next()) maxConn = Integer.parseInt(rs.getString(2).trim());
+                }
+                if (maxConn > 0) {
+                    try (Statement st = conn.createStatement();
+                         ResultSet rs = st.executeQuery("SHOW STATUS LIKE 'Threads_connected'")) {
+                        if (rs.next()) {
+                            int current = Integer.parseInt(rs.getString(2).trim());
+                            int free = Math.max(0, maxConn - current);
+                            log.debug("[POOL] Validation | MySQL: max_connections={}, current={}, free={}", maxConn, current, free);
+                            return free;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[POOL] Validation | Error querying free connections | jdbcUrl={} | error={} | "
+                    + "Fix: ensure DB supports SHOW max_connections / pg_stat_activity (PostgreSQL) or equivalent",
+                    sanitizeUrl(jdbcUrl), e.getMessage(), e);
+        }
+        return -1;
+    }
+
+    /**
+     * Calibrates pool size by attempting to establish connections.
+     * If connection-limit exceptions occur, queries DB for max_connections and uses 60% of available.
+     */
+    private void calibratePoolSize(com.zaxxer.hikari.HikariDataSource hikari, String connectionKey,
+                                   int requestedMax, int requestedMinIdle, String jdbcUrl) {
+        if (requestedMax <= 1) {
+            ConnectionPoolLogger.logPoolCalibration(requestedMax, requestedMax, null, hikari.getPoolName());
+            return;
+        }
+
+        List<Connection> acquired = new ArrayList<>(requestedMax);
+        String rootCause = null;
+        try {
+            log.debug("[POOL] Calibration | Acquiring up to {} connections to verify DB support", requestedMax);
+            for (int i = 0; i < requestedMax; i++) {
+                Connection conn = hikari.getConnection();
+                acquired.add(conn);
+            }
+        } catch (Exception e) {
+            rootCause = extractRootCauseMessage(e);
+            if (isConnectionLimitError(e)) {
+                log.warn("[POOL] Calibration | Unable to acquire {} connections - DB limit hit | "
+                        + "successfulConnections={}, attempting to collect free connections from DB",
+                        requestedMax, acquired.size());
+                int newMax = resolvePoolSizeFromDbLimit(acquired, requestedMax, jdbcUrl, rootCause);
+                hikari.setMaximumPoolSize(newMax);
+                int currentMinIdle = hikari.getMinimumIdle();
+                if (currentMinIdle > newMax) {
+                    int newMinIdle = Math.min(requestedMinIdle, newMax);
+                    hikari.setMinimumIdle(Math.max(0, newMinIdle));
+                    log.info("[POOL] Calibration | minIdle adjusted: {} → {} (to fit maxPoolSize={})",
+                            currentMinIdle, hikari.getMinimumIdle(), newMax);
+                }
+                log.warn("[POOL] Calibration | DB connection limit | requested maxPoolSize={} NOT supported | "
+                        + "adjusted to actualMaxPoolSize={} (60% of available) | rootCause={}",
+                        requestedMax, newMax, rootCause);
+            } else {
+                log.error("[POOL] Calibration | Unable to connect during calibration | pool={} | requestedMax={} | "
+                        + "successfulConnections={} | error={} | Verify: DB is up, credentials, network, connection timeout",
+                        hikari.getPoolName(), requestedMax, acquired.size(), rootCause, e);
+            }
+        } finally {
+            for (Connection c : acquired) {
+                try { c.close(); } catch (Exception ignored) { /* release back to pool */ }
+            }
+        }
+
+        int actualMax = hikari.getMaximumPoolSize();
+        ConnectionPoolLogger.logPoolCalibration(requestedMax, actualMax, rootCause, hikari.getPoolName());
+    }
+
+    /**
+     * Resolves pool size when DB connection limit is hit: query max_connections and free slots, use 60% of available.
+     */
+    private int resolvePoolSizeFromDbLimit(List<Connection> acquired, int requestedMax, String jdbcUrl, String rootCause) {
+        int available = -1;
+        Connection conn = acquired.isEmpty() ? null : acquired.get(0);
+        if (conn == null || jdbcUrl == null) {
+            log.warn("[POOL] Calibration | Cannot collect free connections - no connection available to query DB | "
+                    + "successfulConnections=0 | rootCause={} | Fallback: using pool size 1", rootCause);
+            return 1;
+        }
+        available = queryAvailableConnections(conn, jdbcUrl);
+        if (available <= 0) {
+            int maxConnFromDb = queryMaxConnectionsFromDb(conn, jdbcUrl);
+            if (maxConnFromDb > 0) {
+                available = maxConnFromDb;
+                log.info("[POOL] Calibration | Collected max_connections={} (current/free query failed) | using 60% = {}",
+                        available, (int) (available * CONNECTION_LIMIT_SAFETY_RATIO));
+            } else {
+                available = Math.max(1, acquired.size());
+                log.error("[POOL] Calibration | Could not query free connections (max_connections/current) | "
+                        + "successfulConnections={} | rootCause={} | Fallback: 60% of successfulConnections = {}",
+                        acquired.size(), rootCause, (int) (available * CONNECTION_LIMIT_SAFETY_RATIO));
+            }
+        } else {
+            log.info("[POOL] Calibration | Collected free connections={} | using 60% = {}",
+                    available, (int) (available * CONNECTION_LIMIT_SAFETY_RATIO));
+        }
+        int newMax = Math.max(1, (int) Math.floor(available * CONNECTION_LIMIT_SAFETY_RATIO));
+        newMax = Math.min(newMax, Math.max(1, acquired.size()));
+        return newMax;
+    }
+
+    /**
+     * Queries DB for max_connections. Returns -1 if not supported or query fails.
+     */
+    private int queryMaxConnectionsFromDb(Connection conn, String jdbcUrl) {
+        try {
+            if (jdbcUrl != null && jdbcUrl.contains("postgresql")) {
+                try (Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery("SHOW max_connections")) {
+                    if (rs.next()) {
+                        return Integer.parseInt(rs.getString(1).trim());
+                    }
+                }
+            } else if (jdbcUrl != null && jdbcUrl.contains("mysql")) {
+                try (Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery("SHOW VARIABLES LIKE 'max_connections'")) {
+                    if (rs.next()) {
+                        return Integer.parseInt(rs.getString(2).trim());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("[POOL] Calibration | Could not query max_connections | jdbcUrl={} | error={}",
+                    sanitizeUrl(jdbcUrl), e.getMessage());
+        }
+        return -1;
+    }
+
+    private String extractRootCauseMessage(Throwable t) {
+        Throwable root = t;
+        while (root.getCause() != null) root = root.getCause();
+        return root.getMessage() != null ? root.getMessage() : t.getMessage();
+    }
+
+    /** Returns true if the exception indicates a connection/slot limit (e.g. PostgreSQL max_connections). */
+    private boolean isConnectionLimitError(Throwable t) {
+        if (t == null) {
+            return false;
+        }
+
+        if (t instanceof java.sql.SQLException) {
+            java.sql.SQLException sqlEx = (java.sql.SQLException) t;
+
+            String sqlState = sqlEx.getSQLState();
+            int errorCode = sqlEx.getErrorCode();
+
+            // -------- PostgreSQL --------
+            if ("53300".equals(sqlState)) {
+                return true;
+            }
+
+            // -------- MySQL / Aurora MySQL --------
+            if (errorCode == 1040 || "08004".equals(sqlState)) {
+                return true;
+            }
+
+            // -------- Oracle --------
+            // ORA-00018, ORA-00020
+            if (errorCode == 18 || errorCode == 20) {
+                return true;
+            }
+
+            // ORA-12516, ORA-12519 (listener refused connection)
+            if (errorCode == 12516 || errorCode == 12519) {
+                return true;
+            }
+        }
+
+        // -------- Message fallback (covers wrapped / Hikari cases) --------
+        String msg = t.getMessage();
+        if (msg != null) {
+            String m = msg.toLowerCase();
+            if (m.contains("too many clients")
+                    || m.contains("too many connections")
+                    || m.contains("remaining connection slots are reserved")
+                    || m.contains("connection limit")
+                    || m.contains("max_connections")
+                    || m.contains("maximum number of sessions")
+                    || m.contains("maximum number of processes")
+                    || m.contains("listener could not find available handler")
+                    || m.contains("no appropriate service handler")) {
+                return true;
+            }
+        }
+
+        // -------- Recurse through cause chain --------
+        return isConnectionLimitError(t.getCause());
+    }
+
+    /**
+     * Re-calibrates an existing pool against DB connection limits.
+     * Call after resize when pool was increased – verifies DB supports the new size.
+     */
+    public void calibratePool(DataSource dataSource) {
+        if (dataSource instanceof com.zaxxer.hikari.HikariDataSource hikari) {
+            int requested = hikari.getMaximumPoolSize();
+            int minIdle = hikari.getMinimumIdle();
+            String key = hikari.getPoolName() != null ? hikari.getPoolName() : sanitizeUrl(hikari.getJdbcUrl());
+            calibratePoolSize(hikari, key, requested, minIdle, hikari.getJdbcUrl());
+        }
+    }
+
+    /**
+     * Increases the HikariCP pool size if the new value is greater than the current maximum.
+     * After resize, runs calibration to ensure DB supports the new size.
+     *
+     * @param dataSource DataSource (must be HikariDataSource)
+     * @param newMaximumPoolSize New maximum pool size (only applied if &gt; current)
+     * @return Actual maximum pool size after resize (may be unchanged)
+     */
+    public int resizePoolIfNeeded(DataSource dataSource, int newMaximumPoolSize) {
+        if (dataSource instanceof com.zaxxer.hikari.HikariDataSource hikari) {
+            int current = hikari.getMaximumPoolSize();
+            if (newMaximumPoolSize > current) {
+                hikari.setMaximumPoolSize(newMaximumPoolSize);
+                log.info("[POOL] Resize | maximumPoolSize: {} → {} (derived from shard count)", current, newMaximumPoolSize);
+                return newMaximumPoolSize;
+            }
+            return current;
+        }
+        return newMaximumPoolSize;
     }
 }
