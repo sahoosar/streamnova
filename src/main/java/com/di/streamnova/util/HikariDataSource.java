@@ -443,7 +443,7 @@ public enum HikariDataSource {
 
             // -------- Oracle --------
             // ORA-00018, ORA-00020
-            if (errorCode == 18 || errorCode == 20) {
+            if (errorCode == 18 || errorCode == 20 || errorCode == 12516 || errorCode == 12519) {
                 return true;
             }
 
