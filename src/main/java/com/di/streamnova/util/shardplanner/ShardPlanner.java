@@ -48,7 +48,7 @@ public final class ShardPlanner {
             if (averageRowSizeBytes != null) {
                 InputValidator.validateRowSizeBytes(averageRowSizeBytes);
             }
-            if (databasePoolMaxSize != null) {
+            if (databasePoolMaxSize != null && databasePoolMaxSize < 10_000) {
                 InputValidator.validatePoolSize(databasePoolMaxSize);
             }
             if (userProvidedShardCount != null && userProvidedShardCount > 0) {
@@ -114,6 +114,14 @@ public final class ShardPlanner {
                             environment, estimatedRowCount, averageRowSizeBytes,
                             targetMbPerShard, databasePoolMaxSize);
                 }
+
+                // Optimization: cap workers by shard capacity to avoid over-provisioning
+                MachineProfile mtProfile = MachineProfileProvider.getProfile(environment.machineType);
+                calculatedWorkerCount = reconcileWorkersWithShards(
+                        calculatedShardCount, calculatedWorkerCount, environment, mtProfile);
+                environment = new ExecutionEnvironment(
+                        environment.machineType, environment.virtualCpus, calculatedWorkerCount,
+                        environment.isLocalExecution, environment.cloudProvider);
             } else {
                 strategy = "RECORD_COUNT";
                 String envName = environment.cloudProvider.name();
@@ -126,6 +134,17 @@ public final class ShardPlanner {
                 } else {
                     calculatedShardCount = calculateShardsUsingRowCountBasedStrategy(
                             environment, estimatedRowCount, databasePoolMaxSize);
+                }
+
+                // When machine type not provided and pool is from config: cap shards at 80% of maximumPoolSize.
+                // When pool is sentinel (e.g. Integer.MAX_VALUE), pool will be derived from shards after this.
+                if (databasePoolMaxSize != null && databasePoolMaxSize > 0 && databasePoolMaxSize < 10_000) {
+                    int shardCapFromPool = Math.max(1, (int) Math.floor(databasePoolMaxSize * 0.8));
+                    if (calculatedShardCount > shardCapFromPool) {
+                        log.info("[ENV: {}] Capping shards at 80% of maximumPoolSize: {} → {} (pool={})",
+                                envName, calculatedShardCount, shardCapFromPool, databasePoolMaxSize);
+                        calculatedShardCount = shardCapFromPool;
+                    }
                 }
 
                 if (userProvidedWorkerCount != null && userProvidedWorkerCount > 0) {
@@ -150,10 +169,14 @@ public final class ShardPlanner {
             log.info("[ENV: {}] Final plan [{}]: {} shards, {} workers",
                     envName, strategy, calculatedShardCount, calculatedWorkerCount);
 
-            int poolMax = (databasePoolMaxSize != null && databasePoolMaxSize > 0) ? databasePoolMaxSize : 16;
+            int poolMax = (databasePoolMaxSize != null && databasePoolMaxSize > 0 && databasePoolMaxSize < 10_000)
+                    ? databasePoolMaxSize : 16;
             int minIdle = (databaseMinimumIdle != null && databaseMinimumIdle > 0)
                     ? databaseMinimumIdle : Math.min(2, poolMax);
-            ConnectionPoolLogger.logStartupSummary(poolMax, minIdle, calculatedShardCount, calculatedWorkerCount);
+            // Skip startup summary when pool was passed as sentinel; caller will log with derived pool
+            if (poolMax < 10_000) {
+                ConnectionPoolLogger.logStartupSummary(poolMax, minIdle, calculatedShardCount, calculatedWorkerCount);
+            }
 
             if (metricsCollector != null) {
                 metricsCollector.recordShardPlanningWithContext(
@@ -177,6 +200,33 @@ public final class ShardPlanner {
             log.error("[ENV: {}] Error calculating optimal shard and worker plan", envName, e);
             throw e;
         }
+    }
+
+    /**
+     * Reconciled worker count with shards to avoid over-provisioning.
+     */
+    private static int reconcileWorkersWithShards(int shardCount, int currentWorkers,
+                                                   ExecutionEnvironment environment,
+                                                   MachineProfile profile) {
+        if (environment.isLocalExecution || currentWorkers <= 1) {
+            return currentWorkers;
+        }
+        int shardsPerWorker = CostOptimizer.calculateOptimalShardsPerWorker(environment);
+        int workersNeededForShards = (int) Math.ceil((double) shardCount / shardsPerWorker);
+        if (workersNeededForShards >= currentWorkers) {
+            return currentWorkers;
+        }
+        int reducedWorkers = Math.max(1, workersNeededForShards);
+        reducedWorkers = WorkerCountCalculator.roundToOptimalWorkerCount(reducedWorkers);
+        int maxWorkers = MachineTypeResourceValidator.calculateMaxWorkersForMachineType(environment, profile);
+        reducedWorkers = Math.min(reducedWorkers, maxWorkers);
+        int newMaxShards = reducedWorkers * environment.virtualCpus * profile.maxShardsPerVcpu();
+        if (shardCount > newMaxShards) {
+            return currentWorkers;
+        }
+        log.info("[ENV: {}] Worker optimization: {} → {} workers ({} shards, {} shards/worker)",
+                environment.cloudProvider.name(), currentWorkers, reducedWorkers, shardCount, shardsPerWorker);
+        return reducedWorkers;
     }
 
     private static void validateMachineTypeForGcpDeployment(ExecutionEnvironment environment,

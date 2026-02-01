@@ -37,6 +37,18 @@ public final class PoolSizeCalculator {
     }
 
     /**
+     * Derives maximumPoolSize from shard count for local execution.
+     * Pool = ceil(shardCount / 0.8) to maintain ~20% headroom.
+     *
+     * @param shardCount Calculated shard count
+     * @return maximumPoolSize (bounded 4–100)
+     */
+    public static int deriveFromShardCount(int shardCount) {
+        int pool = Math.max(1, (int) Math.ceil(shardCount / 0.8));
+        return Math.max(4, Math.min(pool, 100));
+    }
+
+    /**
      * Calculates maximumPoolSize from machine type (vCPUs + profile).
      *
      * @param machineType       Machine type (e.g. n2-standard-4)

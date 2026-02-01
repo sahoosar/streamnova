@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -25,37 +26,58 @@ public final class PostgresStatisticsEstimator {
     public record TableStatistics(long rowCount, int avgRowSizeBytes) {}
     
     /**
+     * Estimates table statistics using a one-off connection (no DataSource needed).
+     * Use for bootstrap when DataSource is not yet created (e.g. local size-based shard calculation).
+     *
+     * @param config Pipeline configuration
+     * @return TableStatistics with row count and average row size
+     */
+    public static TableStatistics estimateStatistics(PipelineConfigSource config) {
+        try {
+            Class.forName(config.getDriver() != null ? config.getDriver() : "org.postgresql.Driver");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("JDBC driver not found: " + config.getDriver(), e);
+        }
+        try (Connection conn = DriverManager.getConnection(
+                config.getJdbcUrl(), config.getUsername(), config.getPassword())) {
+            return estimateFromConnection(conn, config);
+        } catch (SQLException e) {
+            log.error("Failed to estimate table statistics", e);
+            throw new RuntimeException("Failed to estimate table statistics: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Estimates table statistics (row count and average row size).
-     * 
+     *
      * @param dataSource DataSource for database connection
      * @param config Pipeline configuration
      * @return TableStatistics with row count and average row size
      */
     public static TableStatistics estimateStatistics(DataSource dataSource, PipelineConfigSource config) {
         try (Connection conn = dataSource.getConnection()) {
-            String tableName = config.getTable();
-            if (tableName == null || tableName.isBlank()) {
-                throw new IllegalArgumentException("Table name is required for statistics estimation");
-            }
-            
-            // Parse schema and table name
-            String[] parts = tableName.split("\\.");
-            String schemaName = parts.length > 1 ? parts[0] : "public";
-            String tableNameOnly = parts.length > 1 ? parts[1] : parts[0];
-            
-            long rowCount = estimateRowCount(conn, schemaName, tableNameOnly);
-            int avgRowSize = estimateAverageRowSize(conn, schemaName, tableNameOnly);
-            
-            log.info("Table statistics estimated: table='{}.{}', rowCount={}, avgRowSizeBytes={}", 
-                    schemaName, tableNameOnly, rowCount, avgRowSize);
+            TableStatistics stats = estimateFromConnection(conn, config);
             ConnectionPoolLogger.logPoolStats(dataSource, "after statistics (1 conn used)");
-
-            return new TableStatistics(rowCount, avgRowSize);
-            
+            return stats;
         } catch (SQLException e) {
             log.error("Failed to estimate table statistics", e);
             throw new RuntimeException("Failed to estimate table statistics: " + e.getMessage(), e);
         }
+    }
+
+    private static TableStatistics estimateFromConnection(Connection conn, PipelineConfigSource config) throws SQLException {
+        String tableName = config.getTable();
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("Table name is required for statistics estimation");
+        }
+        String[] parts = tableName.split("\\.");
+        String schemaName = parts.length > 1 ? parts[0] : "public";
+        String tableNameOnly = parts.length > 1 ? parts[1] : parts[0];
+        long rowCount = estimateRowCount(conn, schemaName, tableNameOnly);
+        int avgRowSize = estimateAverageRowSize(conn, schemaName, tableNameOnly);
+        log.info("Table statistics estimated: table='{}.{}', rowCount={}, avgRowSizeBytes={}",
+                schemaName, tableNameOnly, rowCount, avgRowSize);
+        return new TableStatistics(rowCount, avgRowSize);
     }
     
     /**

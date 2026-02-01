@@ -7,11 +7,11 @@ import com.di.streamnova.handler.jdbc.postgres.PostgresDataQualityChecker;
 import com.di.streamnova.handler.jdbc.postgres.PostgresPartitionValueFormatter;
 import com.di.streamnova.handler.jdbc.postgres.PostgresSchemaDetector;
 import com.di.streamnova.handler.jdbc.postgres.PostgresStatisticsEstimator;
+import com.di.streamnova.util.ConnectionPoolLogger;
 import com.di.streamnova.util.HikariDataSource;
 import com.di.streamnova.util.InputValidator;
 import com.di.streamnova.util.MetricsCollector;
 import com.di.streamnova.util.TypeConverter;
-import com.di.streamnova.util.shardplanner.PoolSizeCalculator;
 import com.di.streamnova.util.shardplanner.ShardPlanner;
 import com.di.streamnova.util.shardplanner.ShardWorkerPlan;
 import lombok.RequiredArgsConstructor;
@@ -70,27 +70,59 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             // 1. Validate inputs
             validateConfig(config);
             
-            // 2. Create DataSource
-            DbConfigSnapshot dbConfig = createDbConfigSnapshot(config);
+            boolean isLocal = (config.getMachineType() == null || config.getMachineType().isBlank());
+            PostgresStatisticsEstimator.TableStatistics stats;
+            DbConfigSnapshot dbConfig;
+            ShardWorkerPlan plan;
+            
+            // Always create DataSource with maximumPoolSize from pipeline_config.yml
+            dbConfig = createDbConfigSnapshot(config);
+            DataSource ds = HikariDataSource.INSTANCE.getOrInit(dbConfig);
+            if (ds instanceof com.zaxxer.hikari.HikariDataSource h) {
+                dbConfig = new DbConfigSnapshot(
+                        dbConfig.jdbcUrl(), dbConfig.username(), dbConfig.password(), dbConfig.driverClassName(),
+                        h.getMaximumPoolSize(), h.getMinimumIdle(), dbConfig.idleTimeoutMs(),
+                        dbConfig.connectionTimeoutMs(), dbConfig.maxLifetimeMs());
+            }
+            
+            if (isLocal) {
+                // Local: use data size to calculate shards (no pool cap for shard count)
+                stats = PostgresStatisticsEstimator.estimateStatistics(ds, config);
+                log.info("Estimated table statistics: rowCount={}, avgRowSizeBytes={} (size-based shard calculation)", 
+                        stats.rowCount(), stats.avgRowSizeBytes());
+                
+                plan = ShardPlanner.calculateOptimalShardWorkerPlan(
+                        pipeline.getOptions(),
+                        dbConfig.maximumPoolSize(),
+                        dbConfig.minimumIdle(),
+                        stats.rowCount(),
+                        stats.avgRowSizeBytes(),
+                        null,
+                        config.getShards(),
+                        config.getWorkers(),
+                        config.getMachineType()
+                );
+            } else {
+                stats = PostgresStatisticsEstimator.estimateStatistics(ds, config);
+                log.info("Estimated table statistics: rowCount={}, avgRowSizeBytes={}", 
+                        stats.rowCount(), stats.avgRowSizeBytes());
+                
+                plan = ShardPlanner.calculateOptimalShardWorkerPlan(
+                        pipeline.getOptions(),
+                        dbConfig.maximumPoolSize(),
+                        dbConfig.minimumIdle(),
+                        stats.rowCount(),
+                        stats.avgRowSizeBytes(),
+                        null,
+                        config.getShards(),
+                        config.getWorkers(),
+                        config.getMachineType()
+                );
+            }
+            
             DataSource dataSource = HikariDataSource.INSTANCE.getOrInit(dbConfig);
-            
-            // 3. Estimate statistics
-            PostgresStatisticsEstimator.TableStatistics stats = PostgresStatisticsEstimator.estimateStatistics(dataSource, config);
-            log.info("Estimated table statistics: rowCount={}, avgRowSizeBytes={}", 
-                    stats.rowCount(), stats.avgRowSizeBytes());
-            
-            // 4. Calculate shard count using ShardPlanner (use dbConfig values for pool consistency)
-            ShardWorkerPlan plan = ShardPlanner.calculateOptimalShardWorkerPlan(
-                    pipeline.getOptions(),
-                    dbConfig.maximumPoolSize(),
-                    dbConfig.minimumIdle(),
-                    stats.rowCount(),
-                    stats.avgRowSizeBytes(),
-                    null, // targetMbPerShard - use default
-                    config.getShards(),
-                    config.getWorkers(),
-                    config.getMachineType()
-            );
+            int minIdle = dbConfig.minimumIdle() > 0 ? dbConfig.minimumIdle() : Math.min(2, dbConfig.maximumPoolSize());
+            ConnectionPoolLogger.logStartupSummary(dbConfig.maximumPoolSize(), minIdle, plan.shardCount(), plan.workerCount());
             
             int shardCount = plan.shardCount();
             log.info("Calculated shard plan: shards={}, workers={}, machineType={}, strategy={}", 
@@ -158,10 +190,14 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     }
 
     private DbConfigSnapshot createDbConfigSnapshot(PipelineConfigSource config) {
-        int maxPoolSize = PoolSizeCalculator.calculate(
-                config.getMaximumPoolSize(),
-                config.getFallbackPoolSize(),
-                config.getMachineType());
+        return createDbConfigSnapshot(config, null);
+    }
+
+    private DbConfigSnapshot createDbConfigSnapshot(PipelineConfigSource config, Integer overrideMaxPoolSize) {
+        int maxPoolSize = (overrideMaxPoolSize != null && overrideMaxPoolSize > 0)
+                ? overrideMaxPoolSize
+                : (config.getMaximumPoolSize() > 0 ? config.getMaximumPoolSize() : config.getFallbackPoolSize());
+        maxPoolSize = Math.max(4, Math.min(maxPoolSize, 100));
         int minIdle = config.getMinimumIdle() > 0
                 ? Math.min(config.getMinimumIdle(), maxPoolSize)
                 : Math.min(4, maxPoolSize);

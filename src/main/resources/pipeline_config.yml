@@ -88,9 +88,10 @@ pipeline:
       # ============================================================================
       # Connection Pool Configuration
       # ============================================================================
-      maximumPoolSize: 8              # Default 8. When machineType missing: use this (or fallbackPoolSize if 0)
+      maximumPoolSize: 8             # Desired pool size. Before creation, DB availability is validated.
+                                     # If available < this value, pool uses 60% of available connections.
       
-      fallbackPoolSize: 8             # When machineType missing AND maximumPoolSize=0; also when vCPUs cannot be parsed
+      fallbackPoolSize: 8             # Used when maximumPoolSize=0
       
       minimumIdle: 2                  # Idle connections to keep warm (must be ≤ maximumPoolSize)
       
@@ -151,6 +152,9 @@ pipeline:
                                        #   Local: Auto-detected from available processors
                                        # ✅ Priority: Machine type takes precedence over record-count scenarios
                                        # ✅ Optimization: High-CPU, High-Memory, Standard strategies applied automatically
+
+      defaultBytesPerRow: 1KB          # if Real row size is increased by 1KB,  tune the value to 2KB, 3KB, etc.        
+
     intermediate:
       dataFormat: parquet
       gcsPath: gs://my-bucket/stage/employees/

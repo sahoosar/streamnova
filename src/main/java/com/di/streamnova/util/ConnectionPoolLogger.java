@@ -36,16 +36,38 @@ public final class ConnectionPoolLogger {
         }
         try {
             String poolName = hikari.getPoolName();
+            int maxPoolSize = hikari.getMaximumPoolSize();
+            int minIdle = hikari.getMinimumIdle();
             int active = hikari.getHikariPoolMXBean().getActiveConnections();
             int idle = hikari.getHikariPoolMXBean().getIdleConnections();
             int total = hikari.getHikariPoolMXBean().getTotalConnections();
             int waiting = hikari.getHikariPoolMXBean().getThreadsAwaitingConnection();
 
-            log.info("[POOL] {} | pool={} | active={}, idle={}, total={}, waiting={} | "
-                    + "Usage: 1 conn/shard when processing",
-                    phase, poolName, active, idle, total, waiting);
+            log.info("[POOL] {} | pool={} | maxSize={}, minIdle={} | active={}, idle={}, total={}, waiting={}",
+                    phase, poolName, maxPoolSize, minIdle, active, idle, total, waiting);
         } catch (Exception e) {
             log.debug("Could not read pool stats for phase {}: {}", phase, e.getMessage());
+        }
+    }
+
+    /**
+     * Logs pool calibration result when requested maxPoolSize is adjusted due to DB connection limits.
+     * Use for analyzing connection pool behavior and root cause.
+     *
+     * @param requestedMaxPoolSize  value requested at datasource creation
+     * @param actualMaxPoolSize     value after calibration (may be reduced)
+     * @param rootCause             exception message or reason for adjustment (null if no adjustment)
+     * @param poolName              pool name for correlation
+     */
+    public static void logPoolCalibration(int requestedMaxPoolSize, int actualMaxPoolSize,
+                                          String rootCause, String poolName) {
+        if (rootCause != null && requestedMaxPoolSize != actualMaxPoolSize) {
+            log.warn("[POOL] Calibration | pool={} | requested maxPoolSize={} NOT supported by DB | "
+                    + "adjusted to actualMaxPoolSize={} | rootCause={}",
+                    poolName != null ? poolName : "unknown", requestedMaxPoolSize, actualMaxPoolSize, rootCause);
+        } else if (requestedMaxPoolSize == actualMaxPoolSize) {
+            log.info("[POOL] Calibration | pool={} | requested maxPoolSize={} | actualMaxPoolSize={} | status=OK",
+                    poolName != null ? poolName : "unknown", requestedMaxPoolSize, actualMaxPoolSize);
         }
     }
 
