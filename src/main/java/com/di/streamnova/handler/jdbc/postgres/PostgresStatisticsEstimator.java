@@ -10,49 +10,74 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.regex.Pattern;
 
 /**
- * Estimates table statistics for PostgreSQL tables.
- * Provides row count and average row size estimates for shard planning.
+ * Estimates table statistics for PostgreSQL before loading data.
+ * Used for shard planning (row count and average row size).
+ * <p>
+ * Production: validates input, uses parameterized queries, structured logging, safe fallbacks.
  */
 @Slf4j
 public final class PostgresStatisticsEstimator {
-    
+
+    private static final String LOG_PREFIX = "[STATS]";
+    private static final String DEFAULT_DRIVER = "org.postgresql.Driver";
+    private static final int DEFAULT_MIN_AVG_ROW_BYTES = 200;
+    private static final int SAMPLE_SIZE = 1000;
+    private static final int PG_PAGE_BYTES = 8192;
+
+    /** Allowed for schema/table names (safe for quoting in SQL). */
+    private static final Pattern SAFE_IDENTIFIER = Pattern.compile("^[a-zA-Z0-9_]+$");
+
     private PostgresStatisticsEstimator() {}
-    
+
     /**
-     * Statistics record containing row count and average row size.
+     * Table statistics returned before loading data.
      */
     public record TableStatistics(long rowCount, int avgRowSizeBytes) {}
-    
+
     /**
-     * Estimates table statistics using a one-off connection (no DataSource needed).
-     * Use for bootstrap when DataSource is not yet created (e.g. local size-based shard calculation).
-     *
-     * @param config Pipeline configuration
-     * @return TableStatistics with row count and average row size
+     * Parsed and validated schema + table identifier.
+     */
+    private record TableRef(String schema, String table) {
+        static TableRef from(String fullTableName) {
+            if (fullTableName == null || fullTableName.isBlank()) {
+                throw new IllegalArgumentException(LOG_PREFIX + " Table name is required");
+            }
+            String trimmed = fullTableName.trim();
+            String[] parts = trimmed.split("\\.", -1);
+            String schema = parts.length > 1 ? parts[0].trim() : "public";
+            String table = parts.length > 1 ? parts[1].trim() : trimmed;
+            if (table.isEmpty()) {
+                throw new IllegalArgumentException(LOG_PREFIX + " Invalid table name: " + fullTableName);
+            }
+            if (!SAFE_IDENTIFIER.matcher(schema).matches() || !SAFE_IDENTIFIER.matcher(table).matches()) {
+                throw new IllegalArgumentException(LOG_PREFIX + " Schema and table must be alphanumeric (got schema='" + schema + "', table='" + table + "')");
+            }
+            return new TableRef(schema, table);
+        }
+    }
+
+    // --- Public API ---
+
+    /**
+     * Estimates statistics using a one-off connection (no pool).
      */
     public static TableStatistics estimateStatistics(PipelineConfigSource config) {
-        try {
-            Class.forName(config.getDriver() != null ? config.getDriver() : "org.postgresql.Driver");
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException("JDBC driver not found: " + config.getDriver(), e);
-        }
+        ensureDriverLoaded(config.getDriver());
         try (Connection conn = DriverManager.getConnection(
                 config.getJdbcUrl(), config.getUsername(), config.getPassword())) {
             return estimateFromConnection(conn, config);
         } catch (SQLException e) {
-            log.error("Failed to estimate table statistics", e);
-            throw new RuntimeException("Failed to estimate table statistics: " + e.getMessage(), e);
+            log.error("{} Failed to connect for statistics | table={} | error={}",
+                    LOG_PREFIX, config.getTable(), e.getMessage(), e);
+            throw new StatisticsException("Statistics estimation failed: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Estimates table statistics (row count and average row size).
-     *
-     * @param dataSource DataSource for database connection
-     * @param config Pipeline configuration
-     * @return TableStatistics with row count and average row size
+     * Estimates statistics using a connection from the given DataSource.
      */
     public static TableStatistics estimateStatistics(DataSource dataSource, PipelineConfigSource config) {
         try (Connection conn = dataSource.getConnection()) {
@@ -60,115 +85,140 @@ public final class PostgresStatisticsEstimator {
             ConnectionPoolLogger.logPoolStats(dataSource, "after statistics (1 conn used)");
             return stats;
         } catch (SQLException e) {
-            log.error("Failed to estimate table statistics", e);
-            throw new RuntimeException("Failed to estimate table statistics: " + e.getMessage(), e);
+            log.error("{} Failed to get connection for statistics | table={} | error={}",
+                    LOG_PREFIX, config.getTable(), e.getMessage(), e);
+            throw new StatisticsException("Statistics estimation failed: " + e.getMessage(), e);
+        }
+    }
+
+    // --- Core logic ---
+
+    private static void ensureDriverLoaded(String driver) {
+        String className = (driver != null && !driver.isBlank()) ? driver : DEFAULT_DRIVER;
+        try {
+            Class.forName(className);
+        } catch (ClassNotFoundException e) {
+            log.error("{} JDBC driver not found: {}", LOG_PREFIX, className, e);
+            throw new StatisticsException("JDBC driver not found: " + className, e);
         }
     }
 
     private static TableStatistics estimateFromConnection(Connection conn, PipelineConfigSource config) throws SQLException {
-        String tableName = config.getTable();
-        if (tableName == null || tableName.isBlank()) {
-            throw new IllegalArgumentException("Table name is required for statistics estimation");
-        }
-        String[] parts = tableName.split("\\.");
-        String schemaName = parts.length > 1 ? parts[0] : "public";
-        String tableNameOnly = parts.length > 1 ? parts[1] : parts[0];
-        long rowCount = estimateRowCount(conn, schemaName, tableNameOnly);
-        int avgRowSize = estimateAverageRowSize(conn, schemaName, tableNameOnly);
-        log.info("Table statistics estimated: table='{}.{}', rowCount={}, avgRowSizeBytes={}",
-                schemaName, tableNameOnly, rowCount, avgRowSize);
+        TableRef ref = TableRef.from(config.getTable());
+        log.info("{} Estimating table '{}.{}'", LOG_PREFIX, ref.schema(), ref.table());
+
+        long rowCount = estimateRowCount(conn, ref);
+        int avgRowSize = estimateAverageRowSize(conn, ref);
+
+        log.info("{} Result | table='{}.{}' | rowCount={}, avgRowSizeBytes={}",
+                LOG_PREFIX, ref.schema(), ref.table(), rowCount, avgRowSize);
         return new TableStatistics(rowCount, avgRowSize);
     }
-    
-    /**
-     * Estimates row count using PostgreSQL statistics.
-     * Falls back to COUNT(*) if statistics are not available.
-     */
-    private static long estimateRowCount(Connection conn, String schemaName, String tableName) throws SQLException {
-        // Try to get row count from pg_class statistics (fast)
-        String statsQuery = "SELECT reltuples::bigint AS row_count " +
-                           "FROM pg_class c " +
-                           "JOIN pg_namespace n ON n.oid = c.relnamespace " +
-                           "WHERE n.nspname = ? AND c.relname = ?";
-        
-        try (PreparedStatement ps = conn.prepareStatement(statsQuery)) {
-            ps.setString(1, schemaName);
-            ps.setString(2, tableName);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    long estimatedCount = rs.getLong("row_count");
-                    if (estimatedCount > 0) {
-                        log.debug("Row count from pg_class statistics: {}", estimatedCount);
-                        return estimatedCount;
-                    }
-                }
-            }
+
+    private static long estimateRowCount(Connection conn, TableRef ref) throws SQLException {
+        Long fromStats = rowCountFromPgClass(conn, ref);
+        if (fromStats != null && fromStats > 0) {
+            log.debug("{} Row count from pg_class: {}", LOG_PREFIX, fromStats);
+            return fromStats;
         }
-        
-        // Fallback to COUNT(*) if statistics not available
-        log.debug("pg_class statistics not available, using COUNT(*) for row count estimation");
-        String countQuery = "SELECT COUNT(*) AS row_count FROM \"" + schemaName + "\".\"" + tableName + "\"";
-        try (PreparedStatement ps = conn.prepareStatement(countQuery);
-             ResultSet rs = ps.executeQuery()) {
-            if (rs.next()) {
-                long count = rs.getLong("row_count");
-                log.debug("Row count from COUNT(*): {}", count);
-                return count;
-            }
+        long fromCount = rowCountFromCountStar(conn, ref);
+        if (fromStats != null && fromStats == 0) {
+            log.warn("{} pg_class returned 0; COUNT(*)={}", LOG_PREFIX, fromCount);
+        } else {
+            log.debug("{} Row count from COUNT(*): {}", LOG_PREFIX, fromCount);
         }
-        
-        log.warn("Could not estimate row count, defaulting to 0");
-        return 0L;
+        return fromCount;
     }
-    
-    /**
-     * Estimates average row size using PostgreSQL statistics.
-     * Falls back to sampling if statistics are not available.
-     */
-    private static int estimateAverageRowSize(Connection conn, String schemaName, String tableName) throws SQLException {
-        // Try to get average row size from pg_class statistics
-        String statsQuery = "SELECT CASE WHEN reltuples > 0 THEN (relpages::bigint * 8192) / reltuples ELSE 0 END AS avg_row_size " +
-                           "FROM pg_class c " +
-                           "JOIN pg_namespace n ON n.oid = c.relnamespace " +
-                           "WHERE n.nspname = ? AND c.relname = ?";
-        
-        try (PreparedStatement ps = conn.prepareStatement(statsQuery)) {
-            ps.setString(1, schemaName);
-            ps.setString(2, tableName);
+
+    private static Long rowCountFromPgClass(Connection conn, TableRef ref) throws SQLException {
+        String sql = "SELECT reltuples::bigint AS row_count FROM pg_class c " +
+                "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, ref.schema());
+            ps.setString(2, ref.table());
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    int avgSize = rs.getInt("avg_row_size");
-                    if (avgSize > 0) {
-                        log.debug("Average row size from pg_class statistics: {} bytes", avgSize);
-                        return avgSize;
-                    }
-                }
+                return rs.next() ? rs.getLong("row_count") : null;
             }
         }
-        
-        // Fallback: sample first 1000 rows to estimate average size
-        log.debug("pg_class statistics not available, sampling rows for average size estimation");
-        String sampleQuery = "SELECT pg_column_size(t.*) AS row_size " +
-                            "FROM \"" + schemaName + "\".\"" + tableName + "\" t " +
-                            "LIMIT 1000";
-        
-        try (PreparedStatement ps = conn.prepareStatement(sampleQuery);
+    }
+
+    private static long rowCountFromCountStar(Connection conn, TableRef ref) throws SQLException {
+        String sql = "SELECT COUNT(*) AS row_count FROM \"" + ref.schema() + "\".\"" + ref.table() + "\"";
+        try (PreparedStatement ps = conn.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
-            long totalSize = 0;
-            int rowCount = 0;
-            while (rs.next()) {
-                totalSize += rs.getInt("row_size");
-                rowCount++;
-            }
-            
-            if (rowCount > 0) {
-                int avgSize = (int) (totalSize / rowCount);
-                log.debug("Average row size from sampling ({} rows): {} bytes", rowCount, avgSize);
-                return Math.max(avgSize, 200); // Minimum 200 bytes
+            return rs.next() ? rs.getLong("row_count") : 0L;
+        }
+    }
+
+    private static int estimateAverageRowSize(Connection conn, TableRef ref) throws SQLException {
+        Integer fromStats = avgRowSizeFromPgClass(conn, ref);
+        if (fromStats != null && fromStats > 0) {
+            log.debug("{} Avg row size from pg_class: {} bytes", LOG_PREFIX, fromStats);
+            return fromStats;
+        }
+        int fromSample = avgRowSizeFromSample(conn, ref);
+        if (fromStats != null && (fromStats == null || fromStats == 0)) {
+            log.warn("{} pg_class avg row size unavailable; using sample: {} bytes", LOG_PREFIX, fromSample);
+        } else {
+            log.debug("{} Avg row size from sample: {} bytes", LOG_PREFIX, fromSample);
+        }
+        return fromSample;
+    }
+
+    /**
+     * Average row size from pg_class: (relpages * page_size) / reltuples.
+     * Returns null if no row or value is zero.
+     */
+    private static Integer avgRowSizeFromPgClass(Connection conn, TableRef ref) throws SQLException {
+        // relpages = number of disk pages; 8192 bytes per page → total table size / row count = avg row size
+        String sql =
+                "SELECT CASE WHEN c.reltuples > 0 " +
+                "        THEN (c.relpages::bigint * ?) / c.reltuples " +
+                "        ELSE 0 " +
+                "       END AS avg_row_size " +
+                "FROM pg_class c " +
+                "JOIN pg_namespace n ON n.oid = c.relnamespace " +
+                "WHERE n.nspname = ? AND c.relname = ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, PG_PAGE_BYTES);
+            ps.setString(2, ref.schema());
+            ps.setString(3, ref.table());
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                int avgRowSize = rs.getInt("avg_row_size");
+                return avgRowSize > 0 ? avgRowSize : null;
             }
         }
-        
-        log.warn("Could not estimate average row size, defaulting to 200 bytes");
-        return 200; // Default average row size
+    }
+
+    private static int avgRowSizeFromSample(Connection conn, TableRef ref) throws SQLException {
+        String sql = "SELECT pg_column_size(t.*) AS row_size FROM \"" + ref.schema() + "\".\"" + ref.table() + "\" t LIMIT " + SAMPLE_SIZE;
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            long sum = 0;
+            int n = 0;
+            while (rs.next()) {
+                sum += rs.getInt("row_size");
+                n++;
+            }
+            if (n == 0) {
+                log.warn("{} No rows sampled; using default avg row size {} bytes", LOG_PREFIX, DEFAULT_MIN_AVG_ROW_BYTES);
+                return DEFAULT_MIN_AVG_ROW_BYTES;
+            }
+            return Math.max((int) (sum / n), DEFAULT_MIN_AVG_ROW_BYTES);
+        }
+    }
+
+    /**
+     * Thrown when statistics estimation fails (connection, driver, or validation).
+     */
+    public static final class StatisticsException extends RuntimeException {
+        public StatisticsException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }
