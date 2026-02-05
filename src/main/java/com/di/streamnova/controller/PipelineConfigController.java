@@ -22,6 +22,7 @@ import java.util.stream.Collectors;
  * Pipeline config and pool statistics.
  * With context-path=/streamnova use: GET /streamnova/api/pipeline/pool-statistics
  */
+
 @RestController
 @RequestMapping("/api/pipeline")
 @RequiredArgsConstructor
