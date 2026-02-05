@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 
+import com.di.streamnova.handler.jdbc.postgres.PostgresStatisticsEstimator;
+
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.HashMap;
@@ -78,6 +80,17 @@ public class GlobalExceptionHandler {
         errorResponse.addDetail("errorCode", e.getErrorCode());
         
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+    }
+
+    /**
+     * Handles statistics estimation failures (connection, driver, validation).
+     */
+    @ExceptionHandler(PostgresStatisticsEstimator.StatisticsException.class)
+    @ResponseStatus(HttpStatus.BAD_GATEWAY)
+    public ResponseEntity<ErrorResponse> handleStatisticsException(PostgresStatisticsEstimator.StatisticsException e) {
+        ErrorCategory category = ErrorCategory.categorize(e);
+        logError("STATISTICS_EXCEPTION", category, e);
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(buildErrorResponse(category, e, HttpStatus.BAD_GATEWAY));
     }
 
     /**

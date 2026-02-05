@@ -28,11 +28,11 @@ import java.util.stream.StreamSupport;
 @Slf4j
 public class DataflowRunnerService {
 
-    private final YamlPipelineProperties yamlProps;
+    private final PipelineConfigService pipelineConfigService;
     private final SourceHandlerRegistry registry;
 
-    public DataflowRunnerService(YamlPipelineProperties yamlProps, SourceHandlerRegistry registry) {
-        this.yamlProps = yamlProps;
+    public DataflowRunnerService(PipelineConfigService pipelineConfigService, SourceHandlerRegistry registry) {
+        this.pipelineConfigService = pipelineConfigService;
         this.registry = registry;
     }
 
@@ -145,11 +145,11 @@ public class DataflowRunnerService {
     )
     private PCollection<Row> startLoadOperation(Pipeline pipeline, String jobId ) {
         // Get the full configuration
-        LoadConfig loadConfig = yamlProps.getConfig();
+        LoadConfig loadConfig = pipelineConfigService.getEffectiveLoadConfig();
 
         if (loadConfig == null) {
-            log.error("Failed to load configuration from YAML properties");
-            throw new IllegalStateException("Configuration cannot be null");
+            log.error("Failed to load configuration from YAML properties. If streamnova.pipeline.config-file is set, run from project root so the file path resolves.");
+            throw new IllegalStateException("Pipeline configuration is null. Check pipeline config YAML (or streamnova.pipeline.config-file path) and run from project root.");
         }
 
         if (loadConfig.getSource()== null) {

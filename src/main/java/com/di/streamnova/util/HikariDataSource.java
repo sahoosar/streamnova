@@ -27,9 +27,13 @@ public enum HikariDataSource {
 
     INSTANCE;
     
+    /** Separator for connection key parts (must not appear in URL/user/password). */
+    private static final String KEY_SEP = "\0";
+
     /**
-     * Cache of DataSources keyed by connection identifier (JDBC URL + username).
-     * This allows multiple different database connections to coexist.
+     * Cache of DataSources keyed by connection identifier (JDBC URL + username + password).
+     * Password is included so that when you change the password in pipeline config, the next request
+     * uses the new password (old pool is closed and a new one is created).
      */
     private final ConcurrentMap<String, DataSource> dataSourceCache = new ConcurrentHashMap<>();
 
@@ -38,14 +42,22 @@ public enum HikariDataSource {
 
     /**
      * Gets or creates a DataSource for the given database configuration.
-     * Each unique combination of JDBC URL and username gets its own connection pool.
-     * 
+     * When the password in pipeline config changes, any existing pool for the same URL+user is closed
+     * and a new pool is created with the new password.
+     *
      * @param snapshot Database configuration snapshot
      * @return DataSource for the specified database configuration
      */
     public DataSource getOrInit(DbConfigSnapshot snapshot) {
+        if (snapshot == null) {
+            throw new IllegalArgumentException("DbConfigSnapshot is required");
+        }
+        if (snapshot.password() == null || snapshot.password().isBlank()) {
+            throw new IllegalArgumentException("password is mandatory: set pipeline.config.source.password in pipeline_config.yml (or use env var e.g. ${POSTGRES_PASSWORD})");
+        }
         String connectionKey = generateConnectionKey(snapshot);
-        
+        closePoolIfSameUrlUserDifferentPassword(snapshot, connectionKey);
+
         return dataSourceCache.computeIfAbsent(connectionKey, key -> {
             log.info("Creating new HikariCP DataSource for connection: {} (user: {})", 
                     sanitizeUrl(snapshot.jdbcUrl()), snapshot.username());
@@ -55,9 +67,10 @@ public enum HikariDataSource {
             int effectiveMinIdle = Math.min(snapshot.minimumIdle(), effectivePoolSize);
 
             HikariConfig hikariConfig = new HikariConfig();
-            hikariConfig.setJdbcUrl(snapshot.jdbcUrl());
+            // Use URL without embedded credentials so connection uses only pipeline config (username/password)
+            hikariConfig.setJdbcUrl(stripCredentialsFromJdbcUrl(snapshot.jdbcUrl()));
             hikariConfig.setUsername(snapshot.username());
-            hikariConfig.setPassword(snapshot.password());
+            hikariConfig.setPassword(snapshot.password() != null ? snapshot.password() : "");
             hikariConfig.setDriverClassName(snapshot.driverClassName());
             hikariConfig.setMaximumPoolSize(effectivePoolSize);
             hikariConfig.setMinimumIdle(effectiveMinIdle);
@@ -89,9 +102,9 @@ public enum HikariDataSource {
             com.zaxxer.hikari.HikariDataSource newDataSource = new com.zaxxer.hikari.HikariDataSource(hikariConfig);
 
             log.info("[POOL] Creating | connectionKey={} | config maxPoolSize={} | effective maxPoolSize={}, minIdle={}",
-                    sanitizeUrl(snapshot.jdbcUrl()), configMaxPool, effectivePoolSize, effectiveMinIdle);
+                    sanitizeConnectionKeyForLog(connectionKey), configMaxPool, effectivePoolSize, effectiveMinIdle);
 
-            // Calibrate as backup if validation missed an edge case
+            // Calibrate: first real connection uses this pool's password; wrong password will fail here with "[POOL] Calibration | Unable to connect"
             calibratePoolSize(newDataSource, connectionKey, effectivePoolSize, effectiveMinIdle, snapshot.jdbcUrl());
 
             ConnectionPoolLogger.logPoolStats(newDataSource, "after calibration (final)");
@@ -101,16 +114,40 @@ public enum HikariDataSource {
 
     /**
      * Generates a unique key for a database configuration.
-     * Uses JDBC URL and username to identify unique connections.
-     * 
-     * @param snapshot Database configuration snapshot
-     * @return Unique connection key
+     * Includes password so that when password is changed in pipeline config, a new pool is used.
      */
     private String generateConnectionKey(DbConfigSnapshot snapshot) {
-        // Key by JDBC URL and username to support multiple databases/users
-        // Note: We don't include password in the key for security reasons,
-        // but each unique URL+username combination gets its own pool
-        return snapshot.jdbcUrl() + "|" + snapshot.username();
+        String url = snapshot.jdbcUrl() != null ? snapshot.jdbcUrl() : "";
+        String user = snapshot.username() != null ? snapshot.username() : "";
+        String pwd = snapshot.password() != null ? snapshot.password() : "";
+        return url + KEY_SEP + user + KEY_SEP + pwd;
+    }
+
+    /**
+     * If there is an existing pool for the same URL+user but different password (e.g. after changing
+     * password in postgre_pipeline_config.yml), close and remove it so the next request uses the new password.
+     */
+    private void closePoolIfSameUrlUserDifferentPassword(DbConfigSnapshot snapshot, String newKey) {
+        String url = snapshot.jdbcUrl() != null ? snapshot.jdbcUrl() : "";
+        String user = snapshot.username() != null ? snapshot.username() : "";
+        String prefix = url + KEY_SEP + user + KEY_SEP;
+        List<String> toRemove = new ArrayList<>();
+        dataSourceCache.forEach((key, ds) -> {
+            if (key.startsWith(prefix) && !key.equals(newKey)) {
+                toRemove.add(key);
+            }
+        });
+        for (String key : toRemove) {
+            DataSource ds = dataSourceCache.remove(key);
+            if (ds instanceof com.zaxxer.hikari.HikariDataSource hikari) {
+                try {
+                    hikari.close();
+                    log.info("[POOL] Closed pool for same URL+user after password change (new pool will use updated password)");
+                } catch (Exception e) {
+                    log.warn("[POOL] Error closing previous pool: {}", e.getMessage());
+                }
+            }
+        }
     }
 
     /**
@@ -137,6 +174,23 @@ public enum HikariDataSource {
         String host = hostPort.split(":")[0];
         String safe = (host + "_" + db + "_" + user).replaceAll("[^a-zA-Z0-9_]", "_").replaceAll("_+", "_");
         return safe.isEmpty() ? "pool" : safe;
+    }
+
+    /**
+     * Strips password and user from JDBC URL so the connection is established only with
+     * pipeline config credentials (setUsername/setPassword). Avoids confusion when URL
+     * has wrong or stale credentials and config has the correct one.
+     */
+    private String stripCredentialsFromJdbcUrl(String jdbcUrl) {
+        if (jdbcUrl == null || jdbcUrl.isBlank()) {
+            return jdbcUrl;
+        }
+        String u = jdbcUrl
+                .replaceAll("[?&]password=[^;&]*", "")
+                .replaceAll("password=[^;&]*&?", "")
+                .replaceAll("[?&]user=[^;&]*", "")
+                .replaceAll("user=[^;&]*&?", "");
+        return u.replaceAll("[?&]+$", "").replaceAll("\\?&", "?");
     }
 
     /**
@@ -168,11 +222,20 @@ public enum HikariDataSource {
         if (dataSource != null && dataSource instanceof com.zaxxer.hikari.HikariDataSource) {
             try {
                 ((com.zaxxer.hikari.HikariDataSource) dataSource).close();
-                log.info("Closed and removed DataSource for connection: {}", connectionKey);
+                log.info("Closed and removed DataSource for connection: {}", sanitizeConnectionKeyForLog(connectionKey));
             } catch (Exception e) {
-                log.warn("Error closing DataSource for connection: {}", connectionKey, e);
+                log.warn("Error closing DataSource for connection: {}", sanitizeConnectionKeyForLog(connectionKey), e);
             }
         }
+    }
+
+    /** Returns connection key with password redacted for logging. */
+    private String sanitizeConnectionKeyForLog(String connectionKey) {
+        if (connectionKey == null) return "null";
+        int second = connectionKey.indexOf(KEY_SEP);
+        if (second >= 0) second = connectionKey.indexOf(KEY_SEP, second + 1);
+        if (second >= 0) return connectionKey.substring(0, second + 1) + "***";
+        return connectionKey;
     }
 
     /**
@@ -188,9 +251,9 @@ public enum HikariDataSource {
             if (dataSource instanceof com.zaxxer.hikari.HikariDataSource) {
                 try {
                     ((com.zaxxer.hikari.HikariDataSource) dataSource).close();
-                    log.debug("Closed DataSource for connection: {}", key);
+                    log.debug("Closed DataSource for connection: {}", sanitizeConnectionKeyForLog(key));
                 } catch (Exception e) {
-                    log.warn("Error closing DataSource for connection: {}", key, e);
+                    log.warn("Error closing DataSource for connection: {}", sanitizeConnectionKeyForLog(key), e);
                 }
             }
         });
@@ -208,6 +271,34 @@ public enum HikariDataSource {
         return dataSourceCache.size();
     }
 
+    /**
+     * Returns current statistics for all cached HikariCP pools (e.g. for REST /api/pipeline/pool-statistics).
+     * Pools are only created on first use, so this may be empty until a pipeline or table-statistics run has occurred.
+     *
+     * @return list of pool stats; empty if no pools exist
+     */
+    public List<PoolStatsSnapshot> getPoolStats() {
+        List<PoolStatsSnapshot> list = new ArrayList<>();
+        dataSourceCache.forEach((key, ds) -> {
+            if (ds instanceof com.zaxxer.hikari.HikariDataSource hikari) {
+                try {
+                    var mx = hikari.getHikariPoolMXBean();
+                    list.add(new PoolStatsSnapshot(
+                            hikari.getPoolName(),
+                            hikari.getMaximumPoolSize(),
+                            hikari.getMinimumIdle(),
+                            mx.getActiveConnections(),
+                            mx.getIdleConnections(),
+                            mx.getTotalConnections(),
+                            mx.getThreadsAwaitingConnection()));
+                } catch (Exception e) {
+                    log.debug("Could not read pool stats for {}: {}", sanitizeConnectionKeyForLog(key), e.getMessage());
+                }
+            }
+        });
+        return list;
+    }
+
     /** Fraction of DB-available connections to use when availability < config (60%). */
     private static final double CONNECTION_LIMIT_SAFETY_RATIO = 0.6;
 
@@ -223,8 +314,10 @@ public enum HikariDataSource {
         if (configMaxPool <= 0) return configMaxPool;
         try {
             loadDriver(snapshot.driverClassName());
+            // Use stripped URL so credentials come only from snapshot (no URL-embedded password)
+            String urlOnly = stripCredentialsFromJdbcUrl(snapshot.jdbcUrl());
             try (Connection conn = DriverManager.getConnection(
-                    snapshot.jdbcUrl(), snapshot.username(), snapshot.password())) {
+                    urlOnly, snapshot.username(), snapshot.password() != null ? snapshot.password() : "")) {
                 log.debug("[POOL] Validation | One-off connection OK, querying free connections in DB");
                 int available = queryAvailableConnections(conn, snapshot.jdbcUrl());
                 if (available <= 0) {

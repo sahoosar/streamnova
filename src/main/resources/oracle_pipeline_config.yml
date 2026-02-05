@@ -1,0 +1,45 @@
+# Loaded by application-oracle.properties. With postgres,oracle profiles both this and postgre_pipeline_config merge (sources.postgres + sources.oracle).
+pipeline:
+  config:
+    defaultSource: oracle
+    sources:
+      oracle:
+        type: oracle
+        driver: oracle.jdbc.OracleDriver
+        jdbcUrl: jdbc:oracle:thin:@localhost:1521:ORCL
+        username: saroj
+        password: admin_11
+        table: schema.some_table
+        maxColumns: 0
+        upperBoundColumn:
+        partitionValue:
+        shardColumn:
+        orderBy:
+        fetchSize: 5000
+        fetchFactor: 1.0
+        maximumPoolSize: 8
+        fallbackPoolSize: 8
+        minimumIdle: 2
+        idleTimeout: 300000
+        connectionTimeout: 300000
+        maxLifetime: 1800000
+        queryTimeout:
+        socketTimeout:
+        statementTimeout:
+        enableProgressLogging: true
+        shards: 0
+        workers: 0
+        machineType:
+        defaultBytesPerRow: 1KB
+
+    intermediate:
+      dataFormat: parquet
+      gcsPath: gs://my-bucket/stage/employees/
+    target:
+      type: bigquery
+      dataset: my_dataset
+      table: employees
+      schemaPath: gs://my-bucket/schemas/employees_schema.json
+      loadMode: load_from_gcs
+      sourceFormat: PARQUET
+      writeDisposition: WRITE_APPEND

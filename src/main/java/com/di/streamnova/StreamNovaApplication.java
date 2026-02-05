@@ -4,12 +4,17 @@ import com.di.streamnova.service.DataflowRunnerService;
 import com.di.streamnova.util.NullFilteringPrintStream;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 import com.di.streamnova.config.YamlPipelineProperties;
 
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+		DataSourceAutoConfiguration.class,
+		DataSourceTransactionManagerAutoConfiguration.class
+})
 @ConfigurationPropertiesScan
 @EnableConfigurationProperties(YamlPipelineProperties.class)
 public class StreamNovaApplication {

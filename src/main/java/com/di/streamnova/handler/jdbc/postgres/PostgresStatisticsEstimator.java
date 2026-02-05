@@ -16,29 +16,43 @@ import java.util.regex.Pattern;
  * Estimates table statistics for PostgreSQL before loading data.
  * Used for shard planning (row count and average row size).
  * <p>
+ * <b>Request (from {@link PipelineConfigSource}):</b> table (required), driver, jdbcUrl, username, password.
+ * <b>Return ({@link TableStatistics}):</b> rowCount, avgRowSizeBytes.
+ * <p>
  * Production: validates input, uses parameterized queries, structured logging, safe fallbacks.
  */
 @Slf4j
 public final class PostgresStatisticsEstimator {
 
+    /** Log prefix for all statistics-related log lines. */
     private static final String LOG_PREFIX = "[STATS]";
+    /** JDBC driver class when config does not specify one. */
     private static final String DEFAULT_DRIVER = "org.postgresql.Driver";
+    /** Minimum average row size (bytes) when sampling returns empty or very small value. */
     private static final int DEFAULT_MIN_AVG_ROW_BYTES = 200;
+    /** Number of rows to sample for average row size when pg_class stats unavailable. */
     private static final int SAMPLE_SIZE = 1000;
+    /** PostgreSQL page size in bytes (used for pg_class.relpages). */
     private static final int PG_PAGE_BYTES = 8192;
 
-    /** Allowed for schema/table names (safe for quoting in SQL). */
+    /** Allowed for schema/table names (safe for quoting in SQL; alphanumeric and underscore only). */
     private static final Pattern SAFE_IDENTIFIER = Pattern.compile("^[a-zA-Z0-9_]+$");
 
     private PostgresStatisticsEstimator() {}
 
     /**
      * Table statistics returned before loading data.
+     *
+     * @param rowCount        number of rows in the table (from pg_class.reltuples or COUNT(*))
+     * @param avgRowSizeBytes average size of one row in bytes (from pg_class or sampled rows)
      */
     public record TableStatistics(long rowCount, int avgRowSizeBytes) {}
 
     /**
      * Parsed and validated schema + table identifier.
+     *
+     * @param schema schema name (e.g. "public"); validated as safe identifier
+     * @param table  table name; validated as safe identifier
      */
     private record TableRef(String schema, String table) {
         static TableRef from(String fullTableName) {
@@ -63,6 +77,11 @@ public final class PostgresStatisticsEstimator {
 
     /**
      * Estimates statistics using a one-off connection (no pool).
+     * Use when no DataSource exists yet (e.g. bootstrap).
+     *
+     * @param config pipeline config; uses table (required), driver, jdbcUrl, username, password
+     * @return TableStatistics with rowCount and avgRowSizeBytes
+     * @throws StatisticsException if driver not found, connection fails, or table invalid
      */
     public static TableStatistics estimateStatistics(PipelineConfigSource config) {
         ensureDriverLoaded(config.getDriver());
@@ -78,6 +97,12 @@ public final class PostgresStatisticsEstimator {
 
     /**
      * Estimates statistics using a connection from the given DataSource.
+     * Use when a connection pool is already available (e.g. after Hikari init).
+     *
+     * @param dataSource connection source; one connection is borrowed and returned
+     * @param config     pipeline config; uses table (required), other attributes ignored for connection
+     * @return TableStatistics with rowCount and avgRowSizeBytes
+     * @throws StatisticsException if connection or estimation fails
      */
     public static TableStatistics estimateStatistics(DataSource dataSource, PipelineConfigSource config) {
         try (Connection conn = dataSource.getConnection()) {
@@ -93,6 +118,12 @@ public final class PostgresStatisticsEstimator {
 
     // --- Core logic ---
 
+    /**
+     * Loads JDBC driver by class name. Uses {@link #DEFAULT_DRIVER} if driver is null or blank.
+     *
+     * @param driver driver class name from config (optional)
+     * @throws StatisticsException if driver class not found
+     */
     private static void ensureDriverLoaded(String driver) {
         String className = (driver != null && !driver.isBlank()) ? driver : DEFAULT_DRIVER;
         try {
@@ -103,6 +134,13 @@ public final class PostgresStatisticsEstimator {
         }
     }
 
+    /**
+     * Computes row count and average row size from an open connection.
+     *
+     * @param conn   active JDBC connection (caller must close)
+     * @param config pipeline config; only {@code config.getTable()} is used (schema.table or table)
+     * @return TableStatistics with rowCount and avgRowSizeBytes
+     */
     private static TableStatistics estimateFromConnection(Connection conn, PipelineConfigSource config) throws SQLException {
         TableRef ref = TableRef.from(config.getTable());
         log.info("{} Estimating table '{}.{}'", LOG_PREFIX, ref.schema(), ref.table());
@@ -115,6 +153,13 @@ public final class PostgresStatisticsEstimator {
         return new TableStatistics(rowCount, avgRowSize);
     }
 
+    /**
+     * Row count: from pg_class.reltuples if available and &gt; 0, else COUNT(*).
+     *
+     * @param conn active connection
+     * @param ref  schema and table (validated)
+     * @return row count (0 if table empty or not found)
+     */
     private static long estimateRowCount(Connection conn, TableRef ref) throws SQLException {
         Long fromStats = rowCountFromPgClass(conn, ref);
         if (fromStats != null && fromStats > 0) {
@@ -130,6 +175,13 @@ public final class PostgresStatisticsEstimator {
         return fromCount;
     }
 
+    /**
+     * Reads row count from pg_class.reltuples (catalog estimate; no table scan).
+     *
+     * @param conn active connection
+     * @param ref  schema and table for n.nspname / c.relname
+     * @return reltuples value, or null if not found or query fails
+     */
     private static Long rowCountFromPgClass(Connection conn, TableRef ref) throws SQLException {
         String sql = "SELECT reltuples::bigint AS row_count FROM pg_class c " +
                 "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ?";
@@ -142,6 +194,13 @@ public final class PostgresStatisticsEstimator {
         }
     }
 
+    /**
+     * Row count via COUNT(*) (full table scan; used when pg_class unavailable or zero).
+     *
+     * @param conn active connection
+     * @param ref  schema and table (quoted in SQL)
+     * @return total row count
+     */
     private static long rowCountFromCountStar(Connection conn, TableRef ref) throws SQLException {
         String sql = "SELECT COUNT(*) AS row_count FROM \"" + ref.schema() + "\".\"" + ref.table() + "\"";
         try (PreparedStatement ps = conn.prepareStatement(sql);
@@ -150,6 +209,13 @@ public final class PostgresStatisticsEstimator {
         }
     }
 
+    /**
+     * Average row size: from pg_class if available and &gt; 0, else from sampling up to {@link #SAMPLE_SIZE} rows.
+     *
+     * @param conn active connection
+     * @param ref  schema and table (validated)
+     * @return average row size in bytes (at least {@link #DEFAULT_MIN_AVG_ROW_BYTES})
+     */
     private static int estimateAverageRowSize(Connection conn, TableRef ref) throws SQLException {
         Integer fromStats = avgRowSizeFromPgClass(conn, ref);
         if (fromStats != null && fromStats > 0) {
@@ -167,10 +233,13 @@ public final class PostgresStatisticsEstimator {
 
     /**
      * Average row size from pg_class: (relpages * page_size) / reltuples.
-     * Returns null if no row or value is zero.
+     *
+     * @param conn active connection
+     * @param ref  schema and table for pg_class join with pg_namespace
+     * @return avg row size in bytes, or null if no row or value is zero
      */
     private static Integer avgRowSizeFromPgClass(Connection conn, TableRef ref) throws SQLException {
-        // relpages = number of disk pages; 8192 bytes per page → total table size / row count = avg row size
+        // relpages = number of disk pages; PG_PAGE_BYTES per page → (relpages * PG_PAGE_BYTES) / reltuples = avg row size
         String sql =
                 "SELECT CASE WHEN c.reltuples > 0 " +
                 "        THEN (c.relpages::bigint * ?) / c.reltuples " +
@@ -195,6 +264,13 @@ public final class PostgresStatisticsEstimator {
         }
     }
 
+    /**
+     * Average row size by sampling rows with pg_column_size(t.*). Fallback when pg_class has no usable value.
+     *
+     * @param conn active connection
+     * @param ref  schema and table (quoted in SQL)
+     * @return average row size in bytes, or {@link #DEFAULT_MIN_AVG_ROW_BYTES} if no rows
+     */
     private static int avgRowSizeFromSample(Connection conn, TableRef ref) throws SQLException {
         String sql = "SELECT pg_column_size(t.*) AS row_size FROM \"" + ref.schema() + "\".\"" + ref.table() + "\" t LIMIT " + SAMPLE_SIZE;
         try (PreparedStatement ps = conn.prepareStatement(sql);
@@ -214,7 +290,8 @@ public final class PostgresStatisticsEstimator {
     }
 
     /**
-     * Thrown when statistics estimation fails (connection, driver, or validation).
+     * Thrown when statistics estimation fails: driver not found, connection error, or invalid table/schema.
+     * Cause is preserved (e.g. SQLException, ClassNotFoundException, IllegalArgumentException).
      */
     public static final class StatisticsException extends RuntimeException {
         public StatisticsException(String message, Throwable cause) {
