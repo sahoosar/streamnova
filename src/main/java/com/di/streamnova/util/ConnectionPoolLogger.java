@@ -18,7 +18,16 @@ import javax.sql.DataSource;
 @Slf4j
 public final class ConnectionPoolLogger {
 
+    /** Separator line to segregate connection/pool logs from the rest of the log output. */
+    public static final String CONNECTION_LOG_SEPARATOR =
+            "................................................................................";
+
     private ConnectionPoolLogger() {}
+
+    /** Logs a dotted separator line before/after a block of connection-related logs. */
+    public static void logConnectionSectionSeparator() {
+        log.info(CONNECTION_LOG_SEPARATOR);
+    }
 
     /**
      * Logs pool statistics if the DataSource is a HikariCP pool.
@@ -80,11 +89,13 @@ public final class ConnectionPoolLogger {
      * @param workerCount   number of workers (for context; connections are per-shard, not per-worker)
      */
     public static void logStartupSummary(int maxPoolSize, int minIdle, int shardCount, int workerCount) {
+        logConnectionSectionSeparator();
         int safeCap = (int) Math.floor(maxPoolSize * 0.8);
         int peakConnections = Math.min(shardCount, maxPoolSize);
         log.info("[POOL] Startup summary | maxPoolSize={}, minIdle={}, shardCount={}, workers={} | "
                 + "Connections at startup: 0 (lazy); peak during read: ≤{} (1 per shard) | "
                 + "Shards capped at {} by pool",
                 maxPoolSize, minIdle, shardCount, workerCount, peakConnections, safeCap);
+        logConnectionSectionSeparator();
     }
 }

@@ -51,7 +51,7 @@ public class PoolStatisticsWithDescriptions {
             summary = "No connection pools created.";
             error = "No datasource created. Check streamnova.pipeline.config-file and startup logs.";
         } else {
-            summary = "Live HikariCP connection pool metrics. One entry per database connection pool (e.g. one for postgres, one for oracle).";
+            summary = "Live HikariCP connection pool metrics. One entry per database connection pool.";
             error = null;
         }
         List<PoolStatsEntryWithDescription> pools = snapshots == null ? List.of() : snapshots.stream()

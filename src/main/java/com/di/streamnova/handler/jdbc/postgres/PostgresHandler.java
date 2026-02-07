@@ -121,9 +121,6 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             }
             
             DataSource dataSource = HikariDataSource.INSTANCE.getOrInit(dbConfig);
-            int minIdle = dbConfig.minimumIdle() > 0 ? dbConfig.minimumIdle() : Math.min(2, dbConfig.maximumPoolSize());
-            ConnectionPoolLogger.logStartupSummary(dbConfig.maximumPoolSize(), minIdle, plan.shardCount(), plan.workerCount());
-            
             int shardCount = plan.shardCount();
             log.info("Calculated shard plan: shards={}, workers={}, machineType={}, strategy={}", 
                     shardCount, plan.workerCount(), plan.machineType(), plan.calculationStrategy());
@@ -1322,9 +1319,6 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                     ps.setInt(2, shardId);    // This shard ID (must be in range [0, shardCount-1])
                     ps.setFetchSize(fetchSize);
                     
-                    // Log query parameters for debugging shard distribution (INFO level for troubleshooting)
-                    logger.info("Executing shard query for shardId={} with shardCount={}. " +
-                            "Query will filter rows where hash % {} = {}", shardId, shardCount, shardCount, shardId);
                     logger.debug("Full query for shardId={}: {}", shardId, query);
                     
                     // Validate shardId is in correct range

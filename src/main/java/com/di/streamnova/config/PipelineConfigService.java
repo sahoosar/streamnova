@@ -237,7 +237,7 @@ public class PipelineConfigService {
                 if (primary.getSources() != null) primary.getSources().forEach(merged::put);
                 merged.put("oracle", other.getSources().get("oracle"));
                 primary.setSources(merged);
-                log.info("Merged pipeline config: added oracle source from oracle_pipeline_config.yml");
+                log.debug("Merged pipeline config: added oracle source from oracle_pipeline_config.yml");
             } else {
                 log.warn("Could not load oracle source: oracle_pipeline_config.yml not found or invalid. Set streamnova.statistics.supported-source-types=postgres to suppress.");
             }
@@ -249,7 +249,7 @@ public class PipelineConfigService {
                 if (primary.getSources() != null) primary.getSources().forEach(merged::put);
                 merged.put("postgres", other.getSources().get("postgres"));
                 primary.setSources(merged);
-                log.info("Merged pipeline config: added postgres source from postgre_pipeline_config.yml");
+                log.debug("Merged pipeline config: added postgres source from postgre_pipeline_config.yml");
             } else {
                 log.warn("Could not load postgres source: postgre_pipeline_config.yml not found or invalid.");
             }
@@ -297,7 +297,6 @@ public class PipelineConfigService {
                 }
                 LoadConfig config = root.getPipeline().getConfig();
                 resolveEnvVarsInConfig(config);
-                logPasswordRead(config); // remove it latter
                 if (logSuccess && !fileConfigUsageLogged) {
                     fileConfigUsageLogged = true;
                     log.info("Pipeline config loaded from file (password from env vars / file, re-read on each request): {}", location);
@@ -324,23 +323,6 @@ public class PipelineConfigService {
         }
         Resource resource = resourceLoader.getResource(location);
         return resource.getInputStream();
-    }
-
-    /** Temporary: log the password value read for each source (for debugging). Remove in production. */
-    private void logPasswordRead(LoadConfig config) {
-        if (config == null) return;
-        if (config.getSource() != null) {
-            String pwd = config.getSource().getPassword();
-            log.info("[CONFIG] password read for source (default): {}", pwd != null ? pwd : "(null)");
-        }
-        if (config.getSources() != null) {
-            config.getSources().forEach((name, src) -> {
-                if (src != null) {
-                    String pwd = src.getPassword();
-                    log.info("[CONFIG] password read for source '{}': {}", name, pwd != null ? pwd : "(null)");
-                }
-            });
-        }
     }
 
     /** Resolves ${VAR} and ${VAR:default} in password fields from environment variables. No hardcoded passwords. */

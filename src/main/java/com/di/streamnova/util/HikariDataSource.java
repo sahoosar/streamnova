@@ -59,7 +59,8 @@ public enum HikariDataSource {
         closePoolIfSameUrlUserDifferentPassword(snapshot, connectionKey);
 
         return dataSourceCache.computeIfAbsent(connectionKey, key -> {
-            log.info("Creating new HikariCP DataSource for connection: {} (user: {})", 
+            ConnectionPoolLogger.logConnectionSectionSeparator();
+            log.info("Creating new HikariCP DataSource for connection: {} (user: {})",
                     sanitizeUrl(snapshot.jdbcUrl()), snapshot.username());
             
             int configMaxPool = snapshot.maximumPoolSize();
@@ -108,6 +109,7 @@ public enum HikariDataSource {
             calibratePoolSize(newDataSource, connectionKey, effectivePoolSize, effectiveMinIdle, snapshot.jdbcUrl());
 
             ConnectionPoolLogger.logPoolStats(newDataSource, "after calibration (final)");
+            ConnectionPoolLogger.logConnectionSectionSeparator();
             return newDataSource;
         });
     }

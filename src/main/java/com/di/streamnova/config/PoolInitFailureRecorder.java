@@ -19,6 +19,11 @@ public final class PoolInitFailureRecorder {
         }
     }
 
+    /** Clear recorded failures (e.g. before a new startup init run). */
+    public static void clearFailures() {
+        failuresBySource.clear();
+    }
+
     /** Returns the last recorded failure message (backward compat). */
     public static String getLastFailureMessage() {
         Map<String, String> all = getAllFailures();

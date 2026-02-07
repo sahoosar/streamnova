@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -49,11 +50,20 @@ public class DataSourceStartupInitializer implements ApplicationRunner {
                 return;
             }
             log.info("[STARTUP] Creating datasources in parallel for: {}", toInit);
+            PoolInitFailureRecorder.clearFailures();
             CompletableFuture<?>[] futures = toInit.stream()
                     .map(type -> CompletableFuture.runAsync(() -> initPoolFor(type)))
                     .toArray(CompletableFuture[]::new);
             CompletableFuture.allOf(futures).join();
-            log.info("[STARTUP] Datasources ready for: {}", toInit);
+
+            Map<String, String> failures = PoolInitFailureRecorder.getAllFailures();
+            for (Map.Entry<String, String> e : failures.entrySet()) {
+                log.error("[STARTUP] Unable to create datasource for '{}': {}", e.getKey(), e.getValue());
+            }
+            List<String> ready = toInit.stream()
+                    .filter(s -> !failures.containsKey(s))
+                    .collect(Collectors.toList());
+            log.info("[STARTUP] Datasources ready for: {}", ready);
         } else {
             PipelineConfigSource single = pipelineConfigService.getEffectiveSourceConfig();
             if (single != null && types.stream().anyMatch(t -> t.equalsIgnoreCase(single.getType()))) {
