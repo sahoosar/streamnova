@@ -12,8 +12,7 @@ import com.di.streamnova.util.HikariDataSource;
 import com.di.streamnova.util.InputValidator;
 import com.di.streamnova.util.MetricsCollector;
 import com.di.streamnova.util.TypeConverter;
-import com.di.streamnova.util.shardplanner.ShardPlanner;
-import com.di.streamnova.util.shardplanner.ShardWorkerPlan;
+import com.di.streamnova.agent.shardplanner.ShardPlanner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.beam.sdk.Pipeline;
@@ -70,11 +69,9 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             // 1. Validate inputs
             validateConfig(config);
             
-            boolean isLocal = (config.getMachineType() == null || config.getMachineType().isBlank());
             PostgresStatisticsEstimator.TableStatistics stats;
             DbConfigSnapshot dbConfig;
-            ShardWorkerPlan plan;
-            
+
             // Always create DataSource with maximumPoolSize from pipeline_config.yml
             dbConfig = createDbConfigSnapshot(config);
             DataSource ds = HikariDataSource.INSTANCE.getOrInit(dbConfig);
@@ -84,46 +81,30 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                         h.getMaximumPoolSize(), h.getMinimumIdle(), dbConfig.idleTimeoutMs(),
                         dbConfig.connectionTimeoutMs(), dbConfig.maxLifetimeMs());
             }
-            
-            if (isLocal) {
-                // Local: use data size to calculate shards (no pool cap for shard count)
-                stats = PostgresStatisticsEstimator.estimateStatistics(ds, config);
-                log.info("Estimated table statistics: rowCount={}, avgRowSizeBytes={} (size-based shard calculation)", 
-                        stats.rowCount(), stats.avgRowSizeBytes());
-                
-                plan = ShardPlanner.calculateOptimalShardWorkerPlan(
-                        pipeline.getOptions(),
-                        dbConfig.maximumPoolSize(),
-                        dbConfig.minimumIdle(),
-                        stats.rowCount(),
-                        stats.avgRowSizeBytes(),
-                        null,
-                        config.getShards(),
-                        config.getWorkers(),
-                        config.getMachineType()
-                );
+
+            stats = PostgresStatisticsEstimator.estimateStatistics(ds, config);
+            log.info("Estimated table statistics: rowCount={}, avgRowSizeBytes={}", stats.rowCount(), stats.avgRowSizeBytes());
+
+            int shardCount;
+            int workerCount;
+            String machineType = config.getMachineType() != null && !config.getMachineType().isBlank()
+                    ? config.getMachineType() : "n2-standard-4";
+            if (config.getShards() != null && config.getShards() > 0 && config.getWorkers() != null && config.getWorkers() > 0) {
+                shardCount = config.getShards();
+                workerCount = config.getWorkers();
+                log.info("Using config shard plan: shards={}, workers={}, machineType={}", shardCount, workerCount, machineType);
             } else {
-                stats = PostgresStatisticsEstimator.estimateStatistics(ds, config);
-                log.info("Estimated table statistics: rowCount={}, avgRowSizeBytes={}", 
-                        stats.rowCount(), stats.avgRowSizeBytes());
-                
-                plan = ShardPlanner.calculateOptimalShardWorkerPlan(
-                        pipeline.getOptions(),
-                        dbConfig.maximumPoolSize(),
-                        dbConfig.minimumIdle(),
+                workerCount = config.getWorkers() != null && config.getWorkers() > 0 ? config.getWorkers() : 1;
+                shardCount = ShardPlanner.suggestShardCountForCandidate(
+                        machineType,
+                        workerCount,
                         stats.rowCount(),
                         stats.avgRowSizeBytes(),
-                        null,
-                        config.getShards(),
-                        config.getWorkers(),
-                        config.getMachineType()
-                );
+                        dbConfig.maximumPoolSize());
+                log.info("Calculated shard plan (agent API): shards={}, workers={}, machineType={}", shardCount, workerCount, machineType);
             }
-            
+
             DataSource dataSource = HikariDataSource.INSTANCE.getOrInit(dbConfig);
-            int shardCount = plan.shardCount();
-            log.info("Calculated shard plan: shards={}, workers={}, machineType={}, strategy={}", 
-                    shardCount, plan.workerCount(), plan.machineType(), plan.calculationStrategy());
             
             // 5. Detect schema with robust validation
             Schema baseSchema = PostgresSchemaDetector.detectSchema(dataSource, config, metricsCollector);

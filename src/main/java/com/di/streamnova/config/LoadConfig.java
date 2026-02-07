@@ -17,6 +17,15 @@ public class LoadConfig {
 
     private String defaultSource;
 
+    /**
+     * Optional named scenarios (e.g. light, heavy) to support different machine types or users.
+     * Select via streamnova.pipeline.scenario=light or env STREAMNOVA_PIPELINE_SCENARIO=heavy.
+     * When set, the matching scenario's overrides are applied to all sources.
+     */
+    private Map<String, ScenarioOverrides> scenarios;
+    /** Default scenario name when streamnova.pipeline.scenario is not set. */
+    private String defaultScenario;
+
     @Valid
     @NotNull
     private IntermediateConfig intermediate;

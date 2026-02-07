@@ -44,6 +44,13 @@ public class PipelineConfigService {
     private String defaultSourceOverride;
 
     /**
+     * Optional scenario name (e.g. light, heavy) to apply machine-type or user-specific overrides from pipeline.config.scenarios.
+     * Can also be set via env STREAMNOVA_PIPELINE_SCENARIO. When empty, defaultScenario from YAML is used if set.
+     */
+    @Value("${streamnova.pipeline.scenario:}")
+    private String scenarioOverride;
+
+    /**
      * Optional path to pipeline config file (e.g. file:./postgre_pipeline_config.yml).
      * When set, config is re-read from this file on each request so password changes take effect without restart.
      */
@@ -202,7 +209,39 @@ public class PipelineConfigService {
         if (supportedTypes.size() >= 2 && supportedTypes.contains("postgres") && supportedTypes.contains("oracle")) {
             loaded = mergeWithOtherSourceConfig(loaded, path, supportedTypes);
         }
+        applyScenarioOverrides(loaded);
         return loaded;
+    }
+
+    /**
+     * If streamnova.pipeline.scenario (or config's defaultScenario) is set and pipeline.config.scenarios contains that key,
+     * applies the scenario's overrides to all sources so different users/machine types can share one YAML.
+     */
+    private void applyScenarioOverrides(LoadConfig config) {
+        if (config == null) return;
+        String scenario = scenarioOverride != null && !scenarioOverride.isBlank()
+                ? scenarioOverride.trim()
+                : (config.getDefaultScenario() != null && !config.getDefaultScenario().isBlank()
+                        ? config.getDefaultScenario().trim()
+                        : null);
+        if (scenario == null) return;
+        Map<String, ScenarioOverrides> scenarios = config.getScenarios();
+        if (scenarios == null || !scenarios.containsKey(scenario)) {
+            if (scenarios != null && !scenarios.isEmpty()) {
+                log.debug("Pipeline scenario '{}' not found in config.scenarios (available: {}). Ignoring.", scenario, scenarios.keySet());
+            }
+            return;
+        }
+        ScenarioOverrides overrides = scenarios.get(scenario);
+        if (overrides == null) return;
+        if (config.getSources() != null) {
+            config.getSources().values().forEach(overrides::applyTo);
+            log.info("Applied pipeline scenario '{}' overrides to {} source(s)", scenario, config.getSources().size());
+        }
+        if (config.getSource() != null) {
+            overrides.applyTo(config.getSource());
+            log.info("Applied pipeline scenario '{}' overrides to single source", scenario);
+        }
     }
 
     private LoadConfig tryClasspathFallback(String path) {

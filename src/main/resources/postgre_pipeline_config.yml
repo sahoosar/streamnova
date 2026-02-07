@@ -28,7 +28,7 @@ pipeline:
         statementTimeout:
         enableProgressLogging: true
         shards: 0
-        workers: 0
+        workers: 1
         machineType:
         defaultBytesPerRow: 1KB
 

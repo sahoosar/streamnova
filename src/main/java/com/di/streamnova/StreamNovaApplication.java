@@ -1,6 +1,6 @@
 package com.di.streamnova;
 
-import com.di.streamnova.service.DataflowRunnerService;
+import com.di.streamnova.runner.DataflowRunnerService;
 import com.di.streamnova.util.NullFilteringPrintStream;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
