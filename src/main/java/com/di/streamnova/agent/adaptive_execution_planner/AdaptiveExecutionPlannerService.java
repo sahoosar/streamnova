@@ -5,6 +5,7 @@ import com.di.streamnova.agent.shardplanner.PoolSizeCalculator;
 import com.di.streamnova.agent.shardplanner.ShardPlanner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -22,10 +23,14 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class AdaptiveExecutionPlannerService {
 
-    /** Default max candidates to avoid explosion (Estimator will score each). */
-    private static final int DEFAULT_MAX_CANDIDATES = 24;
-    /** Fallback pool size when deriving from machine type. */
-    private static final int FALLBACK_POOL_SIZE = 8;
+    @Value("${streamnova.recommend.max-candidates:8}")
+    private int defaultMaxCandidates;
+
+    @Value("${streamnova.recommend.max-workers:8}")
+    private int maxWorkers;
+
+    @Value("${streamnova.recommend.fallback-pool-size:4}")
+    private int fallbackPoolSize;
 
     /**
      * Generates load candidates from a table profile. Uses full machine ladder
@@ -36,7 +41,7 @@ public class AdaptiveExecutionPlannerService {
      * @return result with list of candidates
      */
     public AdaptivePlanResult generate(TableProfile tableProfile, String profileRunId) {
-        return generate(tableProfile, profileRunId, DEFAULT_MAX_CANDIDATES, null);
+        return generate(tableProfile, profileRunId, defaultMaxCandidates, null, null);
     }
 
     /**
@@ -49,6 +54,22 @@ public class AdaptiveExecutionPlannerService {
      */
     public AdaptivePlanResult generate(TableProfile tableProfile, String profileRunId,
                                              Integer maxCandidates, String machineFamily) {
+        return generate(tableProfile, profileRunId, maxCandidates, machineFamily, null);
+    }
+
+    /**
+     * Generates load candidates with optional max count, machine family filter, and database pool cap.
+     * When databasePoolMaxSize is set, shard count per candidate is capped at 80% of pool (connection headroom).
+     *
+     * @param tableProfile         profile from Profiler
+     * @param profileRunId         optional run id
+     * @param maxCandidates        cap on number of candidates (default 24)
+     * @param machineFamily        optional filter: "n2", "n2d", "c3" (null = all)
+     * @param databasePoolMaxSize  optional max connection pool size; when set, shards ≤ floor(pool * 0.8)
+     */
+    public AdaptivePlanResult generate(TableProfile tableProfile, String profileRunId,
+                                             Integer maxCandidates, String machineFamily,
+                                             Integer databasePoolMaxSize) {
         if (tableProfile == null) {
             log.warn("[CANDIDATES] No table profile; returning empty result");
             return AdaptivePlanResult.builder()
@@ -58,9 +79,12 @@ public class AdaptiveExecutionPlannerService {
                     .build();
         }
 
-        int cap = maxCandidates != null && maxCandidates > 0 ? maxCandidates : DEFAULT_MAX_CANDIDATES;
+        int cap = maxCandidates != null && maxCandidates > 0 ? maxCandidates : defaultMaxCandidates;
         Set<ExecutionPlanOption> seen = new LinkedHashSet<>();
         List<ExecutionPlanOption> candidates = new ArrayList<>();
+        if (databasePoolMaxSize != null && databasePoolMaxSize > 0) {
+            log.debug("[CANDIDATES] Pool cap applied: shards ≤ 80% of {} = {}", databasePoolMaxSize, (int) Math.floor(databasePoolMaxSize * 0.8));
+        }
 
         // Use n2 series first, then n2d, then c3 (family order)
         List<List<String>> tiers = machineFamily != null && !machineFamily.isBlank()
@@ -75,14 +99,14 @@ public class AdaptiveExecutionPlannerService {
             for (String machineType : machineTypes) {
                 if (candidates.size() >= cap) break;
                 int vCpus = MachineLadder.extractVcpus(machineType);
-                List<Integer> workerCounts = WorkerScaling.getReducedWorkerCandidates(32);
+                List<Integer> workerCounts = WorkerScaling.getReducedWorkerCandidates(maxWorkers);
                 for (int workers : workerCounts) {
                     if (candidates.size() >= cap) break;
                     int shards = ShardPlanner.suggestShardCountForCandidate(
                             machineType, workers,
                             tableProfile.getRowCountEstimate(), tableProfile.getAvgRowSizeBytes(),
-                            null);
-                    int poolSize = PoolSizeCalculator.calculateFromMachineType(machineType, FALLBACK_POOL_SIZE);
+                            databasePoolMaxSize);
+                    int poolSize = PoolSizeCalculator.calculateFromMachineType(machineType, fallbackPoolSize);
                     poolSize = Math.max(poolSize, Math.min(shards, 100));
                     ExecutionPlanOption c = ExecutionPlanOption.builder()
                             .machineType(machineType)

@@ -51,6 +51,9 @@ public class RecommendationController {
     @Value("${streamnova.estimator.usd-to-gbp:0.79}")
     private double usdToGbp;
 
+    @Value("${streamnova.recommend.database-pool-max-size:#{null}}")
+    private Integer defaultDatabasePoolMaxSize;
+
     /**
      * Runs full pipeline: profile → generate candidates → estimate time/cost → recommend by mode.
      *
@@ -61,7 +64,8 @@ public class RecommendationController {
      * @param maxCostUsd        guardrail: max cost in USD (optional)
      * @param maxDurationSec    guardrail: max duration in seconds (optional)
      * @param minThroughputMbPerSec guardrail: min throughput MB/s (optional)
-     * @param allowedMachineTypes   guardrail: allowed machine types, comma-separated. Default from config: n2-standard-32, n2-standard-64, n2-standard-128 (optional)
+     * @param allowedMachineTypes   guardrail: allowed machine types, comma-separated. Default from config (optional)
+     * @param databasePoolMaxSize  max DB connection pool size; shards capped at 80%. Request overrides config (optional)
      */
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<RecommendationResult> recommend(
@@ -72,14 +76,16 @@ public class RecommendationController {
             @RequestParam(required = false) Double maxCostUsd,
             @RequestParam(required = false) Double maxDurationSec,
             @RequestParam(required = false) Double minThroughputMbPerSec,
-            @RequestParam(required = false) List<String> allowedMachineTypes) {
+            @RequestParam(required = false) List<String> allowedMachineTypes,
+            @RequestParam(required = false) Integer databasePoolMaxSize) {
         ProfileResult profileResult = profilerService.profile(source, warmUp);
         if (profileResult == null || profileResult.getTableProfile() == null) {
             return ResponseEntity.noContent().build();
         }
 
+        Integer effectivePoolMaxSize = databasePoolMaxSize != null ? databasePoolMaxSize : defaultDatabasePoolMaxSize;
         AdaptivePlanResult genResult = adaptiveExecutionPlannerService.generate(
-                profileResult.getTableProfile(), profileResult.getRunId(), null, null);
+                profileResult.getTableProfile(), profileResult.getRunId(), null, null, effectivePoolMaxSize);
         if (genResult.getCandidates() == null || genResult.getCandidates().isEmpty()) {
             return ResponseEntity.noContent().build();
         }

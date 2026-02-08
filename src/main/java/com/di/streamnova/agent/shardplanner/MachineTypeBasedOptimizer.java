@@ -180,9 +180,10 @@ public final class MachineTypeBasedOptimizer {
             machineTypeShards = Math.max(sizeBasedShardCount, recordsBasedShards);
         }
         
-        // vCPUs is a maximum constraint, not a minimum target
-        // Only use CPU-based calculation if data-based is too small (below minimum)
-        int minShardsForParallelism = Math.max(1, environment.virtualCpus / 2); // At least half vCPUs for parallelism
+        // Recommended safe shards for standard: total vCPUs (workers × vCPUs) so work distributes across all cores.
+        // E.g. n2-standard-4: 1 worker→4, 2 workers→8, 4 workers→16. Capped by profile max.
+        int totalVcpus = environment.workerCount * environment.virtualCpus;
+        int minShardsForParallelism = Math.min(Math.max(1, totalVcpus), maxShardsFromCpu);
         machineTypeShards = Math.max(machineTypeShards, minShardsForParallelism);
         
         // Cap at CPU-based maximum (constraint)
