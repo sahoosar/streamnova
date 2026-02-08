@@ -10,7 +10,7 @@ Orchestrator for a fully autonomous batch loading system: plan → optimize cost
 | **Candidate Generator** | `agent.adaptive_execution_planner` | Machine ladder (n2→n2d→c3), worker scaling, shard planning |
 | **Estimator** | `agent.estimator` | Time & cost prediction per candidate (heuristic; USD internal) |
 | **Recommender** | `agent.recommender` | COST_OPTIMAL / FAST_LOAD / BALANCED; picks best candidate by mode |
-| **Execution Engine** | `agent.execution_engine` | Contract + ExecutionEngineService; delegates to DataflowRunnerService (see EXECUTION_ENGINE_STATUS.md) |
+| **Execution Engine** | `agent.execution_engine` | ExecutionEngineService + **POST /api/agent/execute** (run with candidate; optional executionRunId updates status). See EXECUTION_ENGINE_STATUS.md. |
 | **Metrics & Learning Store** | `agent.metrics` | Estimates vs actuals, throughput profiles, execution status; store + REST API |
 
 ## Profiler (implemented)
@@ -48,14 +48,14 @@ Apply the schema with Flyway/Liquibase when implementing persistent Metrics & Le
 - **Sink cap** – `SinkCap`: BQ direct 100 MB/s, GCS+BQ load 400 MB/s.
 - **EstimationContext** – profile, loadPattern, sourceType, throughputSample; passed to `estimateWithCaps`.
 - **Bottleneck** – SOURCE | CPU | SINK | PARALLELISM on each `EstimatedCandidate` (which cap limited throughput).
-- **Time & cost** – effective throughput = min(parallel, sourceCap, cpuCap, sinkCap); duration = totalMb / effective; cost = duration × vCPU-hours × rate. Existing `estimate(profile, candidates, throughput)` uses DIRECT and profile source type.
+- **Time & cost** – effective throughput = min(parallel, sourceCap, cpuCap, sinkCap); duration = totalMb / effective; cost = duration × vCPU-hours × rate. When no warm-up throughput is available, **historical throughput** from getThroughputProfiles (same table) is used as fallback so cold runs get better estimates.
 
 ## Recommender (COST vs FAST scoring, Cheapest/Fastest/Balanced, Guardrails)
 
 - **COST vs FAST scoring** – `RecommenderService.scoreCandidates(estimated, guardrails)` → list of `ScoredCandidate`: `costScore` and `fastScore` (0–100; higher = better). Best cost in list = 100 cost score; best duration = 100 fast score. `balancedScoreRaw` = cost×time (lower = better).
-- **Cheapest / Fastest / Balanced** – `recommendCheapestFastestBalanced(estimated, guardrails)` → `RecommendationTriple`: `cheapest`, `fastest`, `balanced` (each an `EstimatedCandidate`). Response includes all three plus `recommended` (for requested mode).
+- **Cheapest / Fastest / Balanced** – `recommendCheapestFastestBalanced(estimated, guardrails, successCountByMachineType)` → `RecommendationTriple`: `cheapest`, `fastest`, `balanced` (each an `EstimatedCandidate`). When success counts are provided, ties are broken by historical success so all three picks prefer proven configs. Response includes all three plus `recommended` (for requested mode).
 - **Guardrail enforcement** – `Guardrails`: optional `maxCostUsd`, `maxDurationSec`, `minThroughputMbPerSec`. `applyGuardrails(estimated, guardrails)` filters to passing candidates; `guardrailViolations(estimated, guardrails)` returns descriptions of failures. Recommendations are chosen only from candidates that pass.
-- **API** – `GET /api/agent/recommend?mode=...&maxCostUsd=&maxDurationSec=&minThroughputMbPerSec=` returns `recommended`, `cheapest`, `fastest`, `balanced`, `scoredCandidates`, `guardrailsApplied`, `guardrailViolations`, `executionRunId`.
+- **API** – `GET /api/agent/recommend?mode=...&maxCostUsd=&maxDurationSec=&minThroughputMbPerSec=` returns `recommended`, `cheapest`, `fastest`, `balanced`, `scoredCandidates`, `guardrailsApplied`, `guardrailViolations`, `executionRunId`. **Default SLA**: when `streamnova.guardrails.max-duration-sec` and/or `streamnova.guardrails.max-cost-usd` are set, they apply when the client does not pass those params.
 
 ## Metrics & Learning Store (implemented)
 
@@ -64,5 +64,6 @@ Apply the schema with Flyway/Liquibase when implementing persistent Metrics & Le
 - **Execution status** – `ExecutionStatus`: runId, profileRunId, mode, loadPattern, sourceType, schema, table, status (PLANNED/RUNNING/SUCCESS/FAILED), startedAt, finishedAt, jobId, message. Recorded when recommend returns (RUNNING); updated on POST execution-outcome.
 - **MetricsLearningStore** – interface: saveEstimateVsActual, saveThroughputProfile, saveExecutionStatus, updateExecutionStatus; find* by runId or recent with optional table filter.
 - **InMemoryMetricsLearningStore** – in-memory implementation (production: use JDBC with AGENT_TABLES_SCHEMA.sql).
-- **MetricsLearningService** – recordRunStarted, recordRunFinished, recordEstimateVsActual, recordThroughputProfile; getEstimatesVsActuals, getThroughputProfiles, getRecentExecutionStatuses, getExecutionStatus.
+- **MetricsLearningService** – recordRunStarted, recordRunFinished, recordEstimateVsActual, recordThroughputProfile; getEstimatesVsActuals, getThroughputProfiles, getRecentExecutionStatuses, getExecutionStatus; **getLearningSignals** (duration/cost correction by machine family, success count by machine type).
+- **Learning loop** – After successful runs, POST execution-outcome records estimate vs actual. On each recommend, **EstimatorService** uses getLearningSignals to apply duration/cost correction factors per machine family (n2, n2d, c3) from past actuals so estimates improve over time. **RecommenderService** prefers candidates whose machine type has more successful runs (tie-break when mode score is equal). Thus after a few rounds the agent converges toward suggesting the candidate that is both predicted and historically appropriate.
 - **REST** – `GET /api/agent/metrics/estimates-vs-actuals`, `GET /api/agent/metrics/throughput-profiles`, `GET /api/agent/metrics/execution-status`; `POST /api/agent/metrics/execution-outcome` (body: runId, success, actualDurationSec, actualCostUsd, jobId, message, optional estimate fields for estimate vs actual).

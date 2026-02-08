@@ -6,7 +6,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Facade for Metrics & Learning Store: record estimates vs actuals, throughput profiles,
@@ -124,5 +129,82 @@ public class MetricsLearningService {
 
     public List<ExecutionStatus> getExecutionStatusesByStatus(String status, int limit) {
         return store.findExecutionStatusesByStatus(status, limit <= 0 ? 50 : Math.min(limit, 100));
+    }
+
+    /**
+     * Returns estimate-vs-actual records for recent runs that completed successfully and match the optional table filter.
+     * Used by the learning loop to compute correction factors and success counts.
+     */
+    public List<EstimateVsActual> getRecentSuccessfulEstimateVsActuals(String sourceType, String schemaName, String tableName, int limit) {
+        int fetch = Math.min(limit * 3, 200);
+        List<ExecutionStatus> statuses = store.findExecutionStatusesByStatus(ExecutionStatus.SUCCESS, fetch);
+        List<EstimateVsActual> out = new ArrayList<>();
+        for (ExecutionStatus s : statuses) {
+            if (sourceType != null && !sourceType.equals(s.getSourceType())) continue;
+            if (schemaName != null && !schemaName.isBlank() && !schemaName.equals(s.getSchemaName())) continue;
+            if (tableName != null && !tableName.isBlank() && !tableName.equals(s.getTableName())) continue;
+            if (out.size() >= limit) break;
+            store.findEstimatesVsActualsByRunId(s.getRunId()).stream().findFirst().ifPresent(out::add);
+        }
+        return out;
+    }
+
+    private static String machineFamily(String machineType) {
+        if (machineType == null || machineType.isBlank()) return "n2";
+        String lower = machineType.toLowerCase();
+        if (lower.startsWith("n2d")) return "n2d";
+        if (lower.startsWith("c3")) return "c3";
+        return "n2";
+    }
+
+    private static double clampCorrection(double ratio) {
+        if (ratio <= 0 || Double.isNaN(ratio)) return 1.0;
+        return Math.max(0.5, Math.min(2.0, ratio));
+    }
+
+    /**
+     * Builds learning signals from recent successful runs: duration/cost correction by machine family
+     * and success count per machine type. Used by EstimatorService (corrections) and RecommenderService (success counts).
+     */
+    public LearningSignals getLearningSignals(String sourceType, String schemaName, String tableName, int limit) {
+        List<EstimateVsActual> records = getRecentSuccessfulEstimateVsActuals(sourceType, schemaName, tableName, limit);
+        if (records.isEmpty()) {
+            return LearningSignals.builder()
+                    .durationCorrectionByMachineFamily(Map.of())
+                    .costCorrectionByMachineFamily(Map.of())
+                    .successCountByMachineType(Map.of())
+                    .build();
+        }
+        Map<String, List<Double>> durationRatiosByFamily = new HashMap<>();
+        Map<String, List<Double>> costRatiosByFamily = new HashMap<>();
+        Map<String, Long> successCountByMachineType = new HashMap<>();
+        for (EstimateVsActual r : records) {
+            if (r.getEstimatedDurationSec() == null || r.getEstimatedDurationSec() <= 0
+                    || r.getActualDurationSec() == null || r.getActualDurationSec() < 0) continue;
+            String family = machineFamily(r.getMachineType());
+            double durRatio = r.getActualDurationSec() / r.getEstimatedDurationSec();
+            durationRatiosByFamily.computeIfAbsent(family, k -> new ArrayList<>()).add(durRatio);
+            if (r.getEstimatedCostUsd() != null && r.getEstimatedCostUsd() > 0 && r.getActualCostUsd() != null && r.getActualCostUsd() >= 0) {
+                double costRatio = r.getActualCostUsd() / r.getEstimatedCostUsd();
+                costRatiosByFamily.computeIfAbsent(family, k -> new ArrayList<>()).add(costRatio);
+            }
+            String mt = r.getMachineType() != null ? r.getMachineType() : "unknown";
+            successCountByMachineType.merge(mt, 1L, Long::sum);
+        }
+        Map<String, Double> durationCorrection = new HashMap<>();
+        for (Map.Entry<String, List<Double>> e : durationRatiosByFamily.entrySet()) {
+            double avg = e.getValue().stream().mapToDouble(Double::doubleValue).average().orElse(1.0);
+            durationCorrection.put(e.getKey(), clampCorrection(avg));
+        }
+        Map<String, Double> costCorrection = new HashMap<>();
+        for (Map.Entry<String, List<Double>> e : costRatiosByFamily.entrySet()) {
+            double avg = e.getValue().stream().mapToDouble(Double::doubleValue).average().orElse(1.0);
+            costCorrection.put(e.getKey(), clampCorrection(avg));
+        }
+        return LearningSignals.builder()
+                .durationCorrectionByMachineFamily(durationCorrection)
+                .costCorrectionByMachineFamily(costCorrection)
+                .successCountByMachineType(successCountByMachineType)
+                .build();
     }
 }

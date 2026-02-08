@@ -16,24 +16,14 @@ So: **Beam pipeline execution and Dataflow-aware planning exist**, but the pipel
 
 ---
 
-## Implemented: agent Execution Engine (simpler architecture)
+## Implemented: agent Execution Engine
 
-- **`agent.execution_engine`** package: no component that
-  1. Takes the **recommended** candidate (or a specific LoadCandidate) from the Recommender.
-  2. Builds **PipelineOptions** (e.g. DataflowPipelineOptions: workerMachineType, maxNumWorkers, project, region) from that candidate.
-  3. Creates the pipeline **with those options** and runs it (or submits to Dataflow).
-- **No API** to trigger “run with recommended plan” or “run with this run ID”.
-- **No link** from RecommendationResult → DataflowRunnerService with overrides.
-
-So: **Dataflow job execution** (running a Beam pipeline, including on Dataflow) is **already implemented** in `DataflowRunnerService` and the handler/ShardPlanner. The **Execution Engine** in the agent sense (take recommendation → build options → run job) **needs to be implemented**.
+- **`ExecutionEngineService`** takes an **ExecutionPlanOption** (candidate), enforces allowed-machine-types guardrail, and calls **DataflowRunnerService.runPipeline(candidate)** so the pipeline runs with that machine type, workers, and shards.
+- **REST**: **POST /api/agent/execute** – body: `{ "candidate": { "machineType", "workerCount", "shardCount", "virtualCpus?", "suggestedPoolSize?", "label?" }, "executionRunId?" }`. Client can take `recommended.getCandidate()` from GET /api/agent/recommend and POST it here. When **executionRunId** is provided, execution status is updated to SUCCESS/FAILED after the run (fixes status staying RUNNING if client never POSTs execution-outcome).
+- Flow: GET recommend → POST execute with recommended candidate → optionally POST execution-outcome with actual duration/cost for learning.
 
 ---
 
-## Recommended next steps
+## Execution-time guardrail: allowed machine types
 
-1. Add **ExecutionService** (or **ExecutionEngine**) in `agent.execution_engine` that:
-   - Accepts a **LoadCandidate** (or runId to resolve the recommended candidate).
-   - Builds **DataflowPipelineOptions** from it: `workerMachineType`, `maxNumWorkers`, project/region from config or env.
-   - Calls a refactored **DataflowRunnerService.runPipeline(PipelineOptions, LoadCandidate overrides)** so the pipeline is created with those options and the handler uses the overridden shard count / machine type / workers for that run.
-2. Optionally add **REST**: `POST /api/agent/execute` with body `{ "runId": "<recommendation run id>" }` or `{ "mode": "COST_OPTIMAL" }` to run the recommend flow and then execute with that recommendation.
-3. Keep **StreamNovaApplication** as-is for “run once at startup” (config-only), or gate `runPipeline()` behind a profile so the agent API is the only trigger when using the agent.
+When `streamnova.guardrails.allowed-machine-types` is set in configuration (comma-separated, e.g. `n2,n2d`), **ExecutionEngineService** enforces it at execution time: `execute(ExecutionPlanOption candidate)` rejects the run if the candidate’s machine type is not in the allowed list (exact or family-prefix match, same rule as recommendation guardrails). This prevents callers from running a disallowed machine type even when bypassing the recommend API. Empty or unset = no execution-time restriction.

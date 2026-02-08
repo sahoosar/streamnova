@@ -34,6 +34,8 @@ public class RecommendationResult {
     List<String> guardrailViolations;
     /** Execution run id recorded in Metrics & Learning Store (for correlating estimates vs actuals). */
     String executionRunId;
+    /** Optional USD→GBP rate for getEstimatedCostGbp(); if null, 0.79 is used. */
+    Double usdToGbpRate;
 
     public Optional<EstimatedCandidate> getRecommended() {
         return Optional.ofNullable(recommended);
@@ -43,9 +45,10 @@ public class RecommendationResult {
         return guardrailViolations != null ? guardrailViolations : Collections.emptyList();
     }
 
-    /** Estimated cost in GBP (approximate; use your own FX rate in production). */
+    /** Estimated cost in GBP; uses usdToGbpRate if set, else 0.79. Configure via streamnova.estimator.usd-to-gbp. */
     public double getEstimatedCostGbp() {
         if (recommended == null) return 0.0;
-        return recommended.getEstimatedCostUsd() * 0.79; // approximate USD→GBP
+        double rate = (usdToGbpRate != null && usdToGbpRate > 0) ? usdToGbpRate : 0.79;
+        return recommended.getEstimatedCostUsd() * rate;
     }
 }

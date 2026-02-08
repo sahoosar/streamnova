@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -29,6 +30,15 @@ public class RecommenderService {
      * Only candidates that pass guardrails are considered.
      */
     public Optional<EstimatedCandidate> recommend(List<EstimatedCandidate> estimated, UserMode mode, Guardrails guardrails) {
+        return recommend(estimated, mode, guardrails, null);
+    }
+
+    /**
+     * Returns the recommended candidate for the given mode, applying guardrails and optionally
+     * preferring candidates with higher historical success count (learning from past runs).
+     */
+    public Optional<EstimatedCandidate> recommend(List<EstimatedCandidate> estimated, UserMode mode, Guardrails guardrails,
+                                                 Map<String, Long> successCountByMachineType) {
         List<EstimatedCandidate> eligible = applyGuardrails(estimated, guardrails);
         if (eligible.isEmpty()) {
             log.warn("[RECOMMENDER] No candidates pass guardrails");
@@ -38,10 +48,16 @@ public class RecommenderService {
             return Optional.of(eligible.get(0));
         }
         Comparator<EstimatedCandidate> comparator = comparatorFor(mode);
+        if (successCountByMachineType != null && !successCountByMachineType.isEmpty()) {
+            comparator = comparator.thenComparing((e1, e2) -> Long.compare(
+                    successCountByMachineType.getOrDefault(safeMachineType(e2), 0L),
+                    successCountByMachineType.getOrDefault(safeMachineType(e1), 0L)));
+        }
         EstimatedCandidate best = eligible.stream().min(comparator).orElse(null);
         if (best != null) {
+            String label = (best.getCandidate() != null) ? best.getCandidate().getLabelOrDefault() : "candidate-null";
             log.info("[RECOMMENDER] Mode={} → {} (est. {}s, ${})",
-                    mode, best.getCandidate().getLabelOrDefault(),
+                    mode, label,
                     String.format("%.1f", best.getEstimatedDurationSec()),
                     String.format("%.4f", best.getEstimatedCostUsd()));
         }
@@ -69,13 +85,15 @@ public class RecommenderService {
         for (EstimatedCandidate e : estimated) {
             double costScore = 100.0 * (1.0 - (e.getEstimatedCostUsd() - minCost) / costRange);
             double fastScore = 100.0 * (1.0 - (e.getEstimatedDurationSec() - minDur) / durRange);
-            double balancedRaw = e.getEstimatedCostUsd() * e.getEstimatedDurationSec();
+            double balancedRaw = balancedScore(e);
+            if (!Double.isFinite(costScore)) costScore = 0.0;
+            if (!Double.isFinite(fastScore)) fastScore = 0.0;
             boolean passes = guardrails == null || guardrails.isEmpty() || guardrails.passes(e);
             out.add(ScoredCandidate.builder()
                     .estimated(e)
                     .costScore(Math.max(0, Math.min(100, costScore)))
                     .fastScore(Math.max(0, Math.min(100, fastScore)))
-                    .balancedScoreRaw(balancedRaw)
+                    .balancedScoreRaw(Double.isFinite(balancedRaw) ? balancedRaw : Double.MAX_VALUE)
                     .passesGuardrails(passes)
                     .build());
         }
@@ -100,7 +118,8 @@ public class RecommenderService {
         for (EstimatedCandidate e : estimated) {
             List<String> v = guardrails.violations(e);
             if (!v.isEmpty()) {
-                out.add(e.getCandidate().getLabelOrDefault() + ": " + String.join("; ", v));
+                String label = (e.getCandidate() != null) ? e.getCandidate().getLabelOrDefault() : "candidate-null";
+                out.add(label + ": " + String.join("; ", v));
             }
         }
         return out;
@@ -110,6 +129,14 @@ public class RecommenderService {
      * Returns Cheapest, Fastest, and Balanced picks (from candidates that pass guardrails).
      */
     public RecommendationTriple recommendCheapestFastestBalanced(List<EstimatedCandidate> estimated, Guardrails guardrails) {
+        return recommendCheapestFastestBalanced(estimated, guardrails, null);
+    }
+
+    /**
+     * Returns Cheapest, Fastest, and Balanced picks, with optional tie-break by historical success count.
+     */
+    public RecommendationTriple recommendCheapestFastestBalanced(List<EstimatedCandidate> estimated, Guardrails guardrails,
+                                                                Map<String, Long> successCountByMachineType) {
         List<EstimatedCandidate> eligible = applyGuardrails(estimated, guardrails);
         if (eligible.isEmpty()) {
             return RecommendationTriple.builder()
@@ -117,18 +144,23 @@ public class RecommenderService {
                     .guardrailViolations(guardrailViolations(estimated, guardrails))
                     .build();
         }
-        EstimatedCandidate cheapest = eligible.stream()
-                .min(Comparator.comparingDouble(EstimatedCandidate::getEstimatedCostUsd)
-                        .thenComparingDouble(EstimatedCandidate::getEstimatedDurationSec))
-                .orElse(null);
-        EstimatedCandidate fastest = eligible.stream()
-                .min(Comparator.comparingDouble(EstimatedCandidate::getEstimatedDurationSec)
-                        .thenComparingDouble(EstimatedCandidate::getEstimatedCostUsd))
-                .orElse(null);
-        EstimatedCandidate balanced = eligible.stream()
-                .min(Comparator.comparingDouble(RecommenderService::balancedScore)
-                        .thenComparingDouble(EstimatedCandidate::getEstimatedCostUsd))
-                .orElse(null);
+        Comparator<EstimatedCandidate> costThenDur = Comparator.comparingDouble(EstimatedCandidate::getEstimatedCostUsd)
+                .thenComparingDouble(EstimatedCandidate::getEstimatedDurationSec);
+        Comparator<EstimatedCandidate> durThenCost = Comparator.comparingDouble(EstimatedCandidate::getEstimatedDurationSec)
+                .thenComparingDouble(EstimatedCandidate::getEstimatedCostUsd);
+        Comparator<EstimatedCandidate> balancedThenCost = Comparator.comparingDouble(RecommenderService::balancedScore)
+                .thenComparingDouble(EstimatedCandidate::getEstimatedCostUsd);
+        if (successCountByMachineType != null && !successCountByMachineType.isEmpty()) {
+            Comparator<EstimatedCandidate> bySuccess = (e1, e2) -> Long.compare(
+                    successCountByMachineType.getOrDefault(safeMachineType(e2), 0L),
+                    successCountByMachineType.getOrDefault(safeMachineType(e1), 0L));
+            costThenDur = costThenDur.thenComparing(bySuccess);
+            durThenCost = durThenCost.thenComparing(bySuccess);
+            balancedThenCost = balancedThenCost.thenComparing(bySuccess);
+        }
+        EstimatedCandidate cheapest = eligible.stream().min(costThenDur).orElse(null);
+        EstimatedCandidate fastest = eligible.stream().min(durThenCost).orElse(null);
+        EstimatedCandidate balanced = eligible.stream().min(balancedThenCost).orElse(null);
         return RecommendationTriple.builder()
                 .cheapest(cheapest)
                 .fastest(fastest)
@@ -155,6 +187,13 @@ public class RecommenderService {
     }
 
     private static double balancedScore(EstimatedCandidate e) {
-        return e.getEstimatedCostUsd() * e.getEstimatedDurationSec();
+        double cost = e.getEstimatedCostUsd();
+        double dur = e.getEstimatedDurationSec();
+        if (!Double.isFinite(cost) || !Double.isFinite(dur) || cost < 0 || dur < 0) return Double.MAX_VALUE;
+        return cost * dur;
+    }
+
+    private static String safeMachineType(EstimatedCandidate e) {
+        return (e != null && e.getCandidate() != null) ? e.getCandidate().getMachineType() : null;
     }
 }
