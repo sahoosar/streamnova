@@ -2,7 +2,7 @@
 
 ## Overview
 
-Metrics have been integrated into both `ShardPlanner` and `PostgresHandler` using **Micrometer**, which is included via Spring Boot Actuator.
+Metrics are recorded via **MetricsCollector** (`com.di.streamnova.util.MetricsCollector`) using **Micrometer** (Spring Boot Actuator). Shard planning in the agent uses `agent.shardplanner.ShardPlanner.suggestShardCountForCandidate()`; metrics are recorded where planning and Postgres read operations run.
 
 ## Available Metrics
 

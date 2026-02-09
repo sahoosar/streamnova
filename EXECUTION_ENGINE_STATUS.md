@@ -5,14 +5,10 @@
 - **`DataflowRunnerService`** (runner package):
   - Creates an Apache Beam `Pipeline` with `Pipeline.create()`.
   - Loads config from YAML via `PipelineConfigService.getEffectiveLoadConfig()`.
-  - Calls `SourceHandler.read(pipeline, config)` (e.g. PostgresHandler) which:
-    - Uses **ShardPlanner** with `pipeline.getOptions()` for environment (Dataflow vs local), machine type, workers.
-    - Reads from the source in parallel (shards).
+  - When running **with a candidate** (e.g. from POST /api/agent/execute), overwrites source config with the candidate’s machineType, workers, shards, and pool size; connection/table stay from YAML.
+  - Calls `SourceHandler.read(pipeline, config)` (e.g. PostgresHandler), which uses `config.getShards()` and `config.getWorkers()` (from candidate when provided).
   - Runs `pipeline.run()` and `result.waitUntilFinish()`; queries metrics.
-- **ShardPlanner** and **EnvironmentDetector** already support **DataflowPipelineOptions** (worker machine type, maxNumWorkers, project, region). If the pipeline were created with those options, the job would run on GCP Dataflow with that configuration.
-- **Entry point**: `StreamNovaApplication.main()` calls `DataflowRunnerService.runPipeline()` once at startup. No API trigger; no parameters from the Recommender.
-
-So: **Beam pipeline execution and Dataflow-aware planning exist**, but the pipeline is created **without** Dataflow options (defaults to DirectRunner when run from main).
+- **Entry point (non-agent)**: `StreamNovaApplication.main()` can call `DataflowRunnerService.runPipeline()` at startup (no candidate). With Dataflow options (project, region, worker machine type), the job runs on GCP Dataflow.
 
 ---
 

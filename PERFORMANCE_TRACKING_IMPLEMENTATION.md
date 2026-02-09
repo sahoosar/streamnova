@@ -6,47 +6,21 @@ Performance tracking is implemented using **Micrometer Timers** across all criti
 
 ## Timer Implementation Locations
 
-### 1. **ShardPlanner - Shard Planning Duration**
+### 1. **Shard planning metrics**
 
-**Location:** `src/main/java/com/di/streamnova/util/ShardPlanner.java`
+**Location:** `src/main/java/com/di/streamnova/util/MetricsCollector.java` records shard planning metrics. The agent uses `com.di.streamnova.agent.shardplanner.ShardPlanner.suggestShardCountForCandidate()` for candidate generation; when the pipeline runs, PostgresHandler uses the config (candidate-overridden or from YAML).
 
-**Timer Name:** `shardplanner.planning.duration`
+**Metric names:** `shardplanner.planning.duration`, `shardplanner.shard.count`, `shardplanner.planning.total` (see METRICS_GUIDE.md and METRICS_ENDPOINT_GUIDE.md).
 
-**Implementation:**
-```java
-// Lines 136-200 in ShardPlanner.java
-public static int calculateOptimalShardCount(...) {
-    long startTime = System.currentTimeMillis();  // ⏱️ Start timer
-    int shardCount = 0;
-    
-    try {
-        // ... shard calculation logic ...
-        
-        // Record metrics with duration
-        if (metricsCollector != null) {
-            long duration = System.currentTimeMillis() - startTime;  // ⏱️ Calculate duration
-            metricsCollector.recordShardPlanningWithContext(
-                    shardCount, duration, environment.virtualCpus, workerCount, estimatedRowCount);
-        }
-        
-        return shardCount;
-    } catch (Exception e) {
-        metricsCollector.recordShardPlanningError();  // Record error
-        throw e;
-    }
-}
-```
+**Implementation:** MetricsCollector is used where shard planning and Postgres read operations are executed; it records duration, shard count, and success/error.
 
-**What it tracks:**
-- Total time to calculate optimal shard count
-- Includes environment detection, data size calculation, and scenario optimization
-- Records P50, P95, P99 percentiles automatically via Micrometer
+**What it tracks:** Shard planning duration, shard count distribution, and success/error counts (see METRICS_GUIDE.md).
 
 ---
 
 ### 2. **PostgresHandler - Read Operation Duration**
 
-**Location:** `src/main/java/com/di/streamnova/handler/impl/PostgresHandler.java`
+**Location:** `src/main/java/com/di/streamnova/handler/jdbc/postgres/PostgresHandler.java`
 
 **Timer Name:** `postgres.handler.read.duration`
 
@@ -81,7 +55,7 @@ public PCollection<Row> read(Pipeline pipeline, PipelineConfigSource config) {
 
 ### 3. **PostgresHandler - Schema Detection Duration**
 
-**Location:** `src/main/java/com/di/streamnova/handler/impl/PostgresHandler.java`
+**Location:** `src/main/java/com/di/streamnova/handler/jdbc/postgres/PostgresHandler.java`
 
 **Timer Name:** `postgres.handler.schema.detection.duration`
 
@@ -105,7 +79,7 @@ metricsCollector.recordSchemaDetection(System.currentTimeMillis() - schemaStartT
 
 ### 4. **PostgresHandler - Statistics Estimation Duration**
 
-**Location:** `src/main/java/com/di/streamnova/handler/impl/PostgresHandler.java`
+**Location:** `src/main/java/com/di/streamnova/handler/jdbc/postgres/PostgresHandler.java`
 
 **Timer Name:** `postgres.handler.statistics.estimation.duration`
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive input validation has been implemented to prevent SQL injection attacks and ensure data integrity across `ShardPlanner` and `PostgresHandler`.
+Comprehensive input validation has been implemented to prevent SQL injection attacks and ensure data integrity in PostgresHandler (and related handlers). ShardPlanner lives in `agent.shardplanner` and is used for candidate shard suggestion.
 
 ## Implementation Location
 

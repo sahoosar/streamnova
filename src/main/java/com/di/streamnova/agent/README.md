@@ -35,7 +35,7 @@ Apply the schema with Flyway/Liquibase when implementing persistent Metrics & Le
 
 - **Machine ladder** – `MachineLadder`: ordered GCP types n2 (standard, highmem, highcpu), n2d-standard, c3-standard (4, 8, 16/22 vCPUs). `getDefaultLadder()`, `getLadder(familyPrefix)`, `getLadderByVcpuTier(vCpus)`.
 - **Worker scaling** – `WorkerScaling`: candidate worker counts (1, 2, 4, 8, 16, 32); `getReducedWorkerCandidates(max)` for bounded generation.
-- **Shard planning** – Shard count for candidates comes from `agent.shardplanner.ShardPlanner.suggestShardCountForCandidate(machineType, workerCount, rowCount, rowSizeBytes, poolMaxSize)`, using the same table record size and max connection pool size logic as the pipeline.
+- **Shard planning** – Shard count for candidates comes from `agent.shardplanner.ShardPlanner.suggestShardCountForCandidate(machineType, workerCount, rowCount, rowSizeBytes, poolMaxSize)`, using the same table record size and max connection pool size logic as the pipeline. See **SHARD_PLANNER_ARCHITECTURE.md** and **SHARD_PLANNER_PRODUCTION_READINESS.md** (project root).
 - **ExecutionPlanOption** – DTO: machineType, workerCount, shardCount, virtualCpus, suggestedPoolSize, label.
 - **AdaptiveExecutionPlannerService** – `generate(TableProfile, profileRunId)` → `AdaptivePlanResult` (list of candidates); optional maxCandidates and machineFamily filter.
 - **REST** – `GET /api/agent/candidates/generate` (profiles then generates); `GET /api/agent/candidates/generate-from-profile?runId=...` (from stored profile).
