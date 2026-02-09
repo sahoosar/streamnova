@@ -11,10 +11,6 @@ pipeline:
         password: admin
         table: market_summary
         maxColumns: 0
-        upperBoundColumn:
-        partitionValue:
-        shardColumn: session_id
-        orderBy:
         fetchSize: 5000
         fetchFactor: 1.0
         maximumPoolSize: 8
@@ -23,13 +19,10 @@ pipeline:
         idleTimeout: 300000
         connectionTimeout: 300000
         maxLifetime: 1800000
-        queryTimeout:
-        socketTimeout:
-        statementTimeout:
         enableProgressLogging: true
+        # When running with a candidate (execute using a recommendation), shards/workers/machineType/pool are overridden by the candidate; these are used only when no candidate is provided.
         shards: 0
         workers: 1
-        machineType:
         defaultBytesPerRow: 1KB
 
     intermediate:

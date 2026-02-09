@@ -1,0 +1,13 @@
+---
+description: Never delete files when reverting or undoing; restore content instead
+alwaysApply: true
+---
+
+# No File Deletion on Undo / Revert
+
+- **Do not delete project source files** when reverting, undoing, or rolling back changes.
+- If the user asks to undo or revert edits to a file, **restore the previous content** by editing the file (search-replace or full write), not by deleting the file.
+- When applying the inverse of a change (e.g. removing a feature that was added), prefer **editing the file back to its prior state** rather than deleting the file.
+- Only delete a file when the user **explicitly asks** to delete or remove that file.
+
+This avoids losing files when undo or revert is used and keeps the project structure intact.

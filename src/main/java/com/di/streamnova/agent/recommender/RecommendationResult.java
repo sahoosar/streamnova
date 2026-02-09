@@ -1,5 +1,6 @@
 package com.di.streamnova.agent.recommender;
 
+import com.di.streamnova.agent.capacity.DurationEstimate;
 import com.di.streamnova.agent.estimator.EstimatedCandidate;
 import lombok.Builder;
 import lombok.Value;
@@ -36,6 +37,8 @@ public class RecommendationResult {
     String executionRunId;
     /** Optional USD→GBP rate for getEstimatedCostGbp(); if null, 0.79 is used. */
     Double usdToGbpRate;
+    /** Optional duration estimate: first run vs based on last run (from capacity package). */
+    DurationEstimate durationEstimate;
 
     public Optional<EstimatedCandidate> getRecommended() {
         return Optional.ofNullable(recommended);

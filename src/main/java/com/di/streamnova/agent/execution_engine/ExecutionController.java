@@ -1,7 +1,9 @@
 package com.di.streamnova.agent.execution_engine;
 
 import com.di.streamnova.agent.adaptive_execution_planner.ExecutionPlanOption;
-import com.di.streamnova.agent.metrics.MetricsLearningService;
+import com.di.streamnova.agent.capacity.CapacityMessageService;
+import com.di.streamnova.agent.capacity.ResourceLimitResponse;
+import com.di.streamnova.agent.capacity.ShardAvailabilityService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -11,10 +13,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 /**
  * REST API to execute a load with a given candidate (e.g. the recommended one from GET /api/agent/recommend).
- * Enables flow: GET recommend → POST execute with recommended candidate.
- * When executionRunId is provided, execution status is updated to SUCCESS/FAILED so status does not stay RUNNING.
+ * Async: submits the job and returns immediately; shards are reserved until the run completes.
+ * Run completion must be reported via POST /api/agent/metrics/execution-outcome (same runId); shards are released there.
  */
 @Slf4j
 @RestController
@@ -23,15 +27,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class ExecutionController {
 
     private final ExecutionEngine executionEngine;
-    private final MetricsLearningService metricsLearningService;
+    private final ShardAvailabilityService shardAvailabilityService;
+    private final CapacityMessageService capacityMessageService;
 
     /**
-     * Run the pipeline with the given candidate.
-     * Body: { "candidate": { "machineType", "workerCount", "shardCount", "virtualCpus?", "suggestedPoolSize?", "label?" }, "executionRunId?" }.
-     * If executionRunId is set, updates execution status to SUCCESS/FAILED after run.
+     * Submit the pipeline with the given candidate (async). Reserves shards for this run; they are released
+     * when POST /api/agent/metrics/execution-outcome is called with the same runId.
+     * Body: { "candidate": { "machineType", "workerCount", "shardCount", ... }, "executionRunId?" }.
+     * executionRunId should be passed from recommend response and reused when reporting outcome.
      */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<ExecutionResult> execute(@RequestBody ExecuteRequest request) {
+    public ResponseEntity<?> execute(@RequestBody ExecuteRequest request) {
         if (request == null || request.getCandidate() == null) {
             return ResponseEntity.badRequest()
                     .body(ExecutionResult.builder().success(false).jobId(null).message("Missing candidate").build());
@@ -55,21 +61,30 @@ public class ExecutionController {
                 .label(c.getLabel())
                 .build();
 
-        ExecutionResult result = executionEngine.execute(candidate);
+        String runId = request.getExecutionRunId() != null && !request.getExecutionRunId().isBlank()
+                ? request.getExecutionRunId()
+                : "exec-" + UUID.randomUUID();
 
-        if (request.getExecutionRunId() != null && !request.getExecutionRunId().isBlank()) {
-            try {
-                metricsLearningService.recordRunFinished(
-                        request.getExecutionRunId(),
-                        result.isSuccess(),
-                        null,
-                        null,
-                        result.getJobId(),
-                        result.getMessage());
-            } catch (Exception ex) {
-                log.warn("[EXECUTION] Failed to update execution status for runId={}: {}", request.getExecutionRunId(), ex.getMessage());
-            }
+        if (!shardAvailabilityService.tryReserve(shards, runId)) {
+            int available = shardAvailabilityService.getAvailableShards();
+            ResourceLimitResponse body = capacityMessageService.buildShardsNotAvailableResponse(available, shards);
+            return ResponseEntity.status(429)
+                    .header("Retry-After", body.getRetryAfterSeconds() != null ? String.valueOf(body.getRetryAfterSeconds()) : null)
+                    .body(body);
         }
-        return ResponseEntity.ok(result);
+
+        try {
+            ExecutionResult result = executionEngine.execute(candidate);
+            if (!result.isSuccess()) {
+                shardAvailabilityService.release(runId);
+            }
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("[EXECUTION] Execute failed for runId={}: {}", runId, e.getMessage(), e);
+            shardAvailabilityService.release(runId);
+            String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return ResponseEntity.status(500)
+                    .body(ExecutionResult.builder().success(false).jobId(null).message("Execution failed: " + message).build());
+        }
     }
 }

@@ -140,12 +140,15 @@ public class DataflowRunnerService {
             PipelineConfigSource baseSource = baseConfig.getSource();
             PipelineConfigSource overriddenSource = new PipelineConfigSource();
             BeanUtils.copyProperties(baseSource, overriddenSource);
+            // Execution plan: use only the candidate. Do not rely on pipeline config for shards, workers, machineType, or pool.
+            // Pipeline config (YAML) is used only for connection, table, and other read settings (jdbcUrl, table, credentials, fetchSize, etc.).
             overriddenSource.setMachineType(candidate.getMachineType());
             overriddenSource.setWorkers(candidate.getWorkerCount());
             overriddenSource.setShards(candidate.getShardCount());
-            if (candidate.getSuggestedPoolSize() > 0) {
-                overriddenSource.setMaximumPoolSize(candidate.getSuggestedPoolSize());
-            }
+            overriddenSource.setMaximumPoolSize(candidate.getSuggestedPoolSize() > 0 ? candidate.getSuggestedPoolSize() : baseSource.getMaximumPoolSize());
+            log.info("Using candidate for execution plan: machineType={}, workers={}, shards={}, poolSize={}; connection/table from pipeline config",
+                    candidate.getMachineType(), candidate.getWorkerCount(), candidate.getShardCount(),
+                    candidate.getSuggestedPoolSize() > 0 ? candidate.getSuggestedPoolSize() : baseSource.getMaximumPoolSize());
 
             LoadConfig overriddenConfig = new LoadConfig();
             overriddenConfig.setSource(overriddenSource);
