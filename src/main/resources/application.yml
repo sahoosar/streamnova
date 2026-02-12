@@ -1,0 +1,155 @@
+# ============================================================================
+# Application
+# ============================================================================
+spring:
+  application:
+    name: StreamNova  # Used in logs and transaction events
+
+  # Pipeline profile (choose DB type and environment)
+  # Single DB: postgres (default) | oracle | postgres-sit | oracle-uat | etc.
+  # Both DBs: postgres, oracle (invokes application-postgres + application-oracle)
+  # See MULTI_PROFILE_HANDLING.md for multiple profiles.
+  profiles:
+    active: postgres
+
+  devtools:
+    add-properties: false  # Disable property-defaults log message (optional)
+
+# Context path (e.g. when behind a proxy at /streamnova)
+server:
+  servlet:
+    context-path: /streamnova
+
+# ============================================================================
+# Actuator - Metrics & Monitoring
+# ============================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      sla:
+        http.server.requests: 100ms,500ms,1s,2s,5s
+
+# ============================================================================
+# Logging
+# ============================================================================
+logging:
+  level:
+    root: INFO
+    com.di.streamnova: INFO
+    DLQ: INFO
+    VALID: INFO
+
+# ============================================================================
+# StreamNova - Guardrails
+# ============================================================================
+# Allowed machine types at recommend/execute. Comma-separated; exact or family prefix (e.g. n2 = n2-*).
+# Empty = no restriction.
+streamnova:
+  guardrails:
+    allowed-machine-types: n2d-standard-2,n2-standard-2,n2d-standard-4,c3-standard-4,n2-standard-4,n2d-standard-8,c3-standard-8,n2-standard-8,n2d-standard-16,n2-standard-16
+    # Optional: uncomment and set to enable default SLA when client omits them
+    # max-duration-sec:   # e.g. 3600 = 1h
+    # max-cost-usd:       # e.g. 10.0
+
+  # --------------------------------------------------------------------------
+  # Estimator (duration and cost estimation)
+  # --------------------------------------------------------------------------
+  estimator:
+    usd-per-vcpu-hour:  # USD per vCPU-hour by family (override for region/pricing)
+      n2: 0.031
+      n2d: 0.027
+      c3: 0.035
+    machine-family-prefixes: n2d,n2,c3   # Ordered; first match wins (n2d before n2)
+    machine-family-default: n2           # Default when no prefix matches
+    usd-to-gbp: 0.79                     # Display rate for cost in GBP
+    default-throughput-mb-per-sec: 50    # When no warm-up or history
+    fallback-duration-sec: 3600           # When effective throughput is 0
+    learning-signals-limit: 100           # Max past runs for duration/cost corrections
+    throughput-history-limit: 10          # Max past runs for throughput history fallback
+    source-cap:                           # MB/s by DB type
+      postgres: 500
+      oracle: 80
+    sink-cap:                             # MB/s by load pattern (bq-direct / gcs-bq)
+      bq-direct: 100
+      gcs-bq: 400
+    cpu-cap-mb-per-sec-per-vcpu: 60       # CPU cap = this × workers × vCPUs
+
+  # --------------------------------------------------------------------------
+  # Recommend API (profile → candidates → estimate → recommend)
+  # --------------------------------------------------------------------------
+  recommend:
+    max-candidates: 4           # Lower = faster; higher = more options
+    max-workers: 4              # Worker counts 1, 2, … up to this
+    max-workers-cap: 8          # Safety: effective max = min(max-workers, this)
+    fallback-pool-size: 4       # When pool not in config; match pipeline fallbackPoolSize
+    max-concurrent-requests: 0  # 0 = no limit; else 429 when exceeded
+    concurrent-request-acquire-timeout-sec: 5  # Wait for slot before 429
+
+  # --------------------------------------------------------------------------
+  # Execution planner (candidate generation)
+  # --------------------------------------------------------------------------
+  execution-planner:
+    machine-ladder:
+      # Order = evaluation order. Empty = built-in default (n2d, n2, c3)
+      types:
+        - n2d-standard-4
+        - n2d-standard-8
+        - n2d-standard-16
+        - n2-standard-4
+        - n2-standard-8
+        - n2-standard-16
+        - c3-standard-4
+        - c3-standard-8
+        - c3-standard-16
+
+  # --------------------------------------------------------------------------
+  # Shard planner
+  # --------------------------------------------------------------------------
+  shardplanner:
+    max-shards-cap: 4                    # When pool not provided (e.g. tests)
+    fallback-shards-when-no-vcpus: 4      # When vCPUs cannot be parsed
+    high-cpu-target-records-per-shard: 20000
+    high-mem-target-records-per-shard: 100000
+    standard-target-records-per-shard: 50000
+    fallback-max-records-per-shard: 200000  # Min-shards when size not available
+    max-mb-per-shard: 500                   # Min-shards when size available (MB)
+    pool-headroom-ratio: 0.8                # Shard cap = pool-size × this (e.g. 80%)
+
+  # --------------------------------------------------------------------------
+  # Profiler (table stats and warm-up)
+  # --------------------------------------------------------------------------
+  profiler:
+    warm-up-rows: 5000
+    warm-up-fetch-size: 1000
+
+  # --------------------------------------------------------------------------
+  # Capacity (execute admission and rate limiting)
+  # --------------------------------------------------------------------------
+  capacity:
+    resource-limited-message: "Due to minimal resources, the request cannot be processed. Please retry later."
+    retry-after-sec: 60
+    max-shards: 0  # 0 = derive from pipeline_config maximumPoolSize; set >0 to override
+    shards-not-available-message: "Not enough shards available; please wait for full availability."
+
+  # --------------------------------------------------------------------------
+  # Statistics / pipeline config
+  # --------------------------------------------------------------------------
+  statistics:
+    # Source types for table stats and startup datasources. Use spring.profiles.active=postgres,oracle when both.
+    supported-source-types: postgres
