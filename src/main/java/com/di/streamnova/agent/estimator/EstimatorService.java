@@ -11,9 +11,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Estimates time and cost per candidate. Applies source cap (e.g. Oracle), CPU cap,
@@ -53,6 +57,31 @@ public class EstimatorService {
     private double sinkCapGcsBq;
     @Value("${streamnova.estimator.cpu-cap-mb-per-sec-per-vcpu}")
     private double cpuCapMbPerSecPerVcpu;
+
+    /** Ordered prefixes for machine family (first match wins; e.g. n2d before n2). From application.properties. */
+    @Value("${streamnova.estimator.machine-family-prefixes}")
+    private String machineFamilyPrefixesConfig;
+    @Value("${streamnova.estimator.machine-family-default}")
+    private String machineFamilyDefault;
+
+    /** Resolved list of prefixes (order matters: n2d before n2). */
+    private List<String> machineFamilyPrefixes;
+    /** Family name -> USD per vCPU hour (populated from n2/n2d/c3 rates). */
+    private Map<String, Double> usdPerVcpuHourByFamily;
+
+    @PostConstruct
+    void initMachineFamilyConfig() {
+        machineFamilyPrefixes = parseMachineFamilyPrefixes(machineFamilyPrefixesConfig);
+        usdPerVcpuHourByFamily = new LinkedHashMap<>();
+        usdPerVcpuHourByFamily.put("n2d", usdPerVcpuHourN2d);
+        usdPerVcpuHourByFamily.put("n2", usdPerVcpuHourN2);
+        usdPerVcpuHourByFamily.put("c3", usdPerVcpuHourC3);
+    }
+
+    private static List<String> parseMachineFamilyPrefixes(String config) {
+        if (config == null || config.isBlank()) return List.of("n2d", "n2", "c3");
+        return Arrays.stream(config.split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList());
+    }
 
     /**
      * Estimates duration and cost for each candidate (backward compatible).
@@ -157,19 +186,20 @@ public class EstimatorService {
     }
 
     private double usdPerVcpuHourFor(String machineType) {
-        if (machineType == null) return usdPerVcpuHourN2;
-        String lower = machineType.toLowerCase();
-        if (lower.startsWith("n2d")) return usdPerVcpuHourN2d;
-        if (lower.startsWith("c3")) return usdPerVcpuHourC3;
-        return usdPerVcpuHourN2;
+        String family = machineFamily(machineType);
+        return usdPerVcpuHourByFamily.getOrDefault(family, usdPerVcpuHourN2);
     }
 
-    private static String machineFamily(String machineType) {
-        if (machineType == null || machineType.isBlank()) return "n2";
+    /** Resolves machine family from type using configurable ordered prefixes (e.g. n2d before n2). */
+    private String machineFamily(String machineType) {
+        if (machineType == null || machineType.isBlank()) return machineFamilyDefault != null ? machineFamilyDefault : "n2";
         String lower = machineType.toLowerCase();
-        if (lower.startsWith("n2d")) return "n2d";
-        if (lower.startsWith("c3")) return "c3";
-        return "n2";
+        for (String prefix : machineFamilyPrefixes) {
+            if (prefix != null && !prefix.isEmpty() && lower.startsWith(prefix.toLowerCase())) {
+                return prefix;
+            }
+        }
+        return machineFamilyDefault != null ? machineFamilyDefault : "n2";
     }
 
     /** When no warm-up throughput is available, use average of recent throughput profiles for this table if any. */
