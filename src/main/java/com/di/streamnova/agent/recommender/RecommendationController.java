@@ -11,6 +11,8 @@ import com.di.streamnova.agent.metrics.LearningSignals;
 import com.di.streamnova.agent.metrics.MetricsLearningService;
 import com.di.streamnova.agent.profiler.ProfileResult;
 import com.di.streamnova.agent.profiler.ProfilerService;
+import com.di.streamnova.config.PipelineConfigService;
+import com.di.streamnova.config.PipelineConfigSource;
 
 import java.util.Arrays;
 import java.util.List;
@@ -45,8 +47,9 @@ public class RecommendationController {
     private final RecommenderService recommenderService;
     private final MetricsLearningService metricsLearningService;
     private final CapacityMessageService capacityMessageService;
+    private final PipelineConfigService pipelineConfigService;
 
-    @Value("${streamnova.guardrails.allowed-machine-types:}")
+    @Value("${streamnova.guardrails.allowed-machine-types}")
     private String allowedMachineTypesConfig;
 
     @Value("${streamnova.guardrails.max-duration-sec:#{null}}")
@@ -54,15 +57,12 @@ public class RecommendationController {
     @Value("${streamnova.guardrails.max-cost-usd:#{null}}")
     private Double defaultMaxCostUsd;
 
-    @Value("${streamnova.estimator.usd-to-gbp:0.79}")
+    @Value("${streamnova.estimator.usd-to-gbp}")
     private double usdToGbp;
 
-    @Value("${streamnova.recommend.database-pool-max-size:#{null}}")
-    private Integer defaultDatabasePoolMaxSize;
-
-    @Value("${streamnova.recommend.max-concurrent-requests:0}")
+    @Value("${streamnova.recommend.max-concurrent-requests}")
     private int maxConcurrentRequests;
-    @Value("${streamnova.recommend.concurrent-request-acquire-timeout-sec:5}")
+    @Value("${streamnova.recommend.concurrent-request-acquire-timeout-sec}")
     private int concurrentRequestAcquireTimeoutSec;
 
     private Semaphore recommendSemaphore;
@@ -83,7 +83,7 @@ public class RecommendationController {
      * @param maxDurationSec    guardrail: max duration in seconds (optional)
      * @param minThroughputMbPerSec guardrail: min throughput MB/s (optional)
      * @param allowedMachineTypes   guardrail: allowed machine types, comma-separated. Default from config (optional)
-     * @param databasePoolMaxSize  max DB connection pool size; shards capped at 80%. Request overrides config (optional)
+     * @param databasePoolMaxSize  max DB connection pool size; shards capped at 80%. If omitted, uses pipeline_config.yml maximumPoolSize (single source of truth)
      */
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> recommend(
@@ -131,7 +131,7 @@ public class RecommendationController {
             return ResponseEntity.noContent().build();
         }
 
-        Integer effectivePoolMaxSize = databasePoolMaxSize != null ? databasePoolMaxSize : defaultDatabasePoolMaxSize;
+        Integer effectivePoolMaxSize = resolvePoolMaxSize(databasePoolMaxSize, source);
         AdaptivePlanResult genResult = adaptiveExecutionPlannerService.generate(
                 profileResult.getTableProfile(), profileResult.getRunId(), null, null, effectivePoolMaxSize);
         if (genResult.getCandidates() == null || genResult.getCandidates().isEmpty()) {
@@ -225,5 +225,14 @@ public class RecommendationController {
     private static Double sanitizeGuardrailDouble(Double value) {
         if (value == null || !Double.isFinite(value) || value < 0) return null;
         return value;
+    }
+
+    /** Pool size: request param overrides; otherwise from pipeline_config.yml (single source of truth). */
+    private Integer resolvePoolMaxSize(Integer requestParam, String sourceKey) {
+        if (requestParam != null && requestParam > 0) return requestParam;
+        PipelineConfigSource src = pipelineConfigService.getEffectiveSourceConfig(sourceKey);
+        if (src == null) return null;
+        int pool = src.getMaximumPoolSize() > 0 ? src.getMaximumPoolSize() : src.getFallbackPoolSize();
+        return pool > 0 ? pool : null;
     }
 }

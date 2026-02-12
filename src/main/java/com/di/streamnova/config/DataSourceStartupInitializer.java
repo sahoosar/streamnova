@@ -29,7 +29,7 @@ public class DataSourceStartupInitializer implements ApplicationRunner {
 
     private final PipelineConfigService pipelineConfigService;
 
-    @Value("${streamnova.statistics.supported-source-types:postgres}")
+    @Value("${streamnova.statistics.supported-source-types}")
     private String supportedSourceTypesConfig;
 
     @Override

@@ -21,22 +21,37 @@ public final class SourceCap {
      * Oracle has a lower cap than Postgres by default.
      */
     public static double getCapMbPerSec(String sourceType) {
+        return getCapMbPerSec(sourceType, POSTGRES_CAP_MB_PER_SEC, ORACLE_CAP_MB_PER_SEC);
+    }
+
+    /**
+     * Returns the source cap in MB/s for the given source type with configurable caps.
+     */
+    public static double getCapMbPerSec(String sourceType, double postgresCapMbPerSec, double oracleCapMbPerSec) {
         if (sourceType == null || sourceType.isBlank()) {
-            return POSTGRES_CAP_MB_PER_SEC;
+            return postgresCapMbPerSec;
         }
         String t = sourceType.trim().toLowerCase();
         if (t.contains("oracle")) {
-            log.debug("[ESTIMATOR] Source cap: Oracle = {} MB/s", ORACLE_CAP_MB_PER_SEC);
-            return ORACLE_CAP_MB_PER_SEC;
+            log.debug("[ESTIMATOR] Source cap: Oracle = {} MB/s", oracleCapMbPerSec);
+            return oracleCapMbPerSec;
         }
-        return POSTGRES_CAP_MB_PER_SEC;
+        return postgresCapMbPerSec;
     }
 
     /**
      * Effective source throughput: min(measured throughput, source cap).
      */
     public static double effectiveSourceThroughputMbPerSec(double measuredMbPerSec, String sourceType) {
-        double cap = getCapMbPerSec(sourceType);
+        return effectiveSourceThroughputMbPerSec(measuredMbPerSec, sourceType, POSTGRES_CAP_MB_PER_SEC, ORACLE_CAP_MB_PER_SEC);
+    }
+
+    /**
+     * Effective source throughput with configurable caps: min(measured throughput, source cap).
+     */
+    public static double effectiveSourceThroughputMbPerSec(double measuredMbPerSec, String sourceType,
+                                                           double postgresCapMbPerSec, double oracleCapMbPerSec) {
+        double cap = getCapMbPerSec(sourceType, postgresCapMbPerSec, oracleCapMbPerSec);
         double effective = Math.min(measuredMbPerSec > 0 ? measuredMbPerSec : Double.MAX_VALUE, cap);
         if (effective < measuredMbPerSec && measuredMbPerSec > 0) {
             log.debug("[ESTIMATOR] Source cap applied: {} MB/s (cap {})", effective, cap);

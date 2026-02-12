@@ -1,5 +1,6 @@
 package com.di.streamnova.agent.shardplanner;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -11,10 +12,26 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("ShardPlanner suggestShardCountForCandidate Tests")
 class ShardPlannerCandidateTest {
 
+    private ShardPlanner shardPlanner;
+
+    @BeforeEach
+    void setUp() {
+        ShardPlannerProperties properties = new ShardPlannerProperties();
+        properties.setMaxShardsCap(256);
+        properties.setFallbackShardsWhenNoVcpus(8);
+        properties.setHighCpuTargetRecordsPerShard(20000);
+        properties.setHighMemTargetRecordsPerShard(100000);
+        properties.setStandardTargetRecordsPerShard(50000);
+        properties.setFallbackMaxRecordsPerShard(200000);
+        properties.setMaxMbPerShard(500);
+        properties.setPoolHeadroomRatio(0.8);
+        shardPlanner = new ShardPlanner(properties);
+    }
+
     @Test
     @DisplayName("Returns shard count in 1-256 for valid machine type and table size")
     void validMachineTypeAndTableSize_returnsInRange() {
-        int shards = ShardPlanner.suggestShardCountForCandidate(
+        int shards = shardPlanner.suggestShardCountForCandidate(
                 "n2-standard-4", 2,
                 1_000_000L, 200,
                 null);
@@ -24,7 +41,7 @@ class ShardPlannerCandidateTest {
     @Test
     @DisplayName("Returns fallback when machine type cannot be parsed for vCPUs")
     void invalidMachineType_returnsFallback() {
-        int shards = ShardPlanner.suggestShardCountForCandidate(
+        int shards = shardPlanner.suggestShardCountForCandidate(
                 "unknown-machine", 1,
                 1000L, 100,
                 null);
@@ -34,7 +51,7 @@ class ShardPlannerCandidateTest {
     @Test
     @DisplayName("Multiple workers with small table still get at least workerCount shards")
     void multipleWorkersSmallTable_minForParallelism() {
-        int shards = ShardPlanner.suggestShardCountForCandidate(
+        int shards = shardPlanner.suggestShardCountForCandidate(
                 "n2-standard-4", 4,
                 100L, 50,  // very small table
                 null);
@@ -45,7 +62,7 @@ class ShardPlannerCandidateTest {
     @Test
     @DisplayName("Pool size null is accepted")
     void poolSizeNull_accepted() {
-        int shards = ShardPlanner.suggestShardCountForCandidate(
+        int shards = shardPlanner.suggestShardCountForCandidate(
                 "n2-standard-8", 2,
                 10_000_000L, 300,
                 null);
@@ -55,7 +72,7 @@ class ShardPlannerCandidateTest {
     @Test
     @DisplayName("Pool size provided caps shards when relevant")
     void poolSizeProvided_respected() {
-        int shards = ShardPlanner.suggestShardCountForCandidate(
+        int shards = shardPlanner.suggestShardCountForCandidate(
                 "n2-standard-16", 4,
                 1_000_000_000L, 500,  // large table
                 16);  // small pool

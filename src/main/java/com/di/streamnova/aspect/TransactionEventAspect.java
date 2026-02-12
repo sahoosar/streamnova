@@ -50,7 +50,7 @@ public class TransactionEventAspect {
 
     @Autowired
     public TransactionEventAspect(TransactionEventLogger eventLogger,
-                                  @Value("${spring.application.name:StreamNova}") String applicationName) {
+                                  @Value("${spring.application.name}") String applicationName) {
         this.eventLogger = eventLogger;
         this.applicationId = applicationName + "-" + UUID.randomUUID().toString().substring(0, 15);
         log.info("TransactionEventAspect initialized with applicationId: {}", applicationId);

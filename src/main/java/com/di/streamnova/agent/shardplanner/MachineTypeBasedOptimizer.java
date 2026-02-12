@@ -3,9 +3,8 @@ package com.di.streamnova.agent.shardplanner;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Optimizes shard count primarily based on machine type characteristics.
- * This is the PRIMARY strategy when machine type is provided.
- * Falls back to record-count scenarios only when machine type is not available.
+ * Optimizes shard count primarily based on machine type and data size (MB).
+ * Data size is primary; record count is used only when size information is not available.
  */
 @Slf4j
 public final class MachineTypeBasedOptimizer {
@@ -13,23 +12,18 @@ public final class MachineTypeBasedOptimizer {
     
     /**
      * Optimizes shard count based on machine type as the primary factor.
-     * 
-     * @param sizeBasedShardCount Base shard count from size calculation
-     * @param estimatedRowCount Estimated row count
-     * @param environment Execution environment
-     * @param profile Machine profile
-     * @param databasePoolMaxSize Database pool size limit
-     * @param dataSizeInfo Data size information
-     * @return Optimized shard count based on machine type
+     *
+     * @param optimizerConfig Configurable thresholds (from ShardPlannerProperties)
      */
     public static int optimizeBasedOnMachineType(int sizeBasedShardCount, Long estimatedRowCount,
                                                ExecutionEnvironment environment, MachineProfile profile,
-                                               Integer databasePoolMaxSize, DataSizeInfo dataSizeInfo) {
+                                               Integer databasePoolMaxSize, DataSizeInfo dataSizeInfo,
+                                               OptimizerConfig optimizerConfig) {
         
         String envName = environment.cloudProvider.name();
-        log.info("[ENV: {}] Machine-type-based optimization starting [{}]: {} vCPUs, {} workers, data-size-based={}, estimated-rows={}",
+        log.info("[ENV: {}] Machine-type-based optimization starting [{}]: {} vCPUs, {} workers, data-size-based={}, hasSizeInfo={}",
                 envName, environment.machineType, environment.virtualCpus, environment.workerCount, 
-                sizeBasedShardCount, estimatedRowCount);
+                sizeBasedShardCount, dataSizeInfo.hasSizeInformation);
         
         String machineTypeLower = environment.machineType.toLowerCase();
         int machineTypeBasedShardCount;
@@ -37,32 +31,24 @@ public final class MachineTypeBasedOptimizer {
         // Calculate based on machine type characteristics
         // NOTE: Data size is considered first, then machine type constraints are applied
         if (machineTypeLower.contains("highcpu")) {
-            // High-CPU machines: maximize parallelism, more shards per vCPU
             machineTypeBasedShardCount = calculateForHighCpuMachine(
-                    sizeBasedShardCount, estimatedRowCount, environment, profile, dataSizeInfo);
+                    sizeBasedShardCount, estimatedRowCount, environment, profile, dataSizeInfo, optimizerConfig);
         } else if (machineTypeLower.contains("highmem") || machineTypeLower.contains("memory")) {
-            // High-Memory machines: balanced, fewer shards but larger per shard
             machineTypeBasedShardCount = calculateForHighMemMachine(
-                    sizeBasedShardCount, estimatedRowCount, environment, profile, dataSizeInfo);
+                    sizeBasedShardCount, estimatedRowCount, environment, profile, dataSizeInfo, optimizerConfig);
         } else {
-            // Standard machines: balanced approach based on vCPUs and workers
             machineTypeBasedShardCount = calculateForStandardMachine(
-                    sizeBasedShardCount, estimatedRowCount, environment, profile, dataSizeInfo);
+                    sizeBasedShardCount, estimatedRowCount, environment, profile, dataSizeInfo, optimizerConfig);
         }
         
         log.debug("After machine-type-specific calculation: {} shards", machineTypeBasedShardCount);
         
-        // Apply data size constraints (ensure we have enough shards for the data)
-        if (estimatedRowCount != null && estimatedRowCount > 0) {
-            // Ensure minimum shards based on data volume
-            int minShardsForData = calculateMinimumShardsForDataSize(
-                    estimatedRowCount, dataSizeInfo, environment);
-            if (minShardsForData > machineTypeBasedShardCount) {
-                log.info("[ENV: {}] Data size requires minimum {} shards (current: {}), adjusting upward", 
-                        envName, minShardsForData, machineTypeBasedShardCount);
-            }
-            machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, minShardsForData);
+        int minShardsForData = calculateMinimumShardsForDataSize(estimatedRowCount, dataSizeInfo, environment, optimizerConfig);
+        if (minShardsForData > machineTypeBasedShardCount) {
+            log.info("[ENV: {}] Data requires minimum {} shards (current: {}), adjusting upward",
+                    envName, minShardsForData, machineTypeBasedShardCount);
         }
+        machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, minShardsForData);
         
         // CRITICAL: Cap by machine profile limits (machine type constraint)
         // Formula: max_shards = workers × vCPUs × maxShardsPerVcpu
@@ -81,9 +67,10 @@ public final class MachineTypeBasedOptimizer {
         int effectiveMinShards = Math.min(profile.minimumShards(), maxShardsFromProfile);
         machineTypeBasedShardCount = Math.max(machineTypeBasedShardCount, effectiveMinShards);
         
-        // Cap by database pool (80% headroom)
+        double headroom = optimizerConfig.poolHeadroomRatio() > 0 && optimizerConfig.poolHeadroomRatio() <= 1
+                ? optimizerConfig.poolHeadroomRatio() : 0.8;
         if (databasePoolMaxSize != null && databasePoolMaxSize > 0) {
-            int safePoolCapacity = (int) Math.floor(databasePoolMaxSize * 0.8);
+            int safePoolCapacity = (int) Math.floor(databasePoolMaxSize * headroom);
             if (machineTypeBasedShardCount > safePoolCapacity) {
                 log.warn("[ENV: {}] Shard count ({}) exceeds database pool capacity ({}). Capping at pool limit.",
                         envName, machineTypeBasedShardCount, safePoolCapacity);
@@ -105,18 +92,12 @@ public final class MachineTypeBasedOptimizer {
      */
     private static int calculateForHighCpuMachine(int sizeBasedShardCount, Long estimatedRowCount,
                                                    ExecutionEnvironment environment, MachineProfile profile,
-                                                   DataSizeInfo dataSizeInfo) {
-        // High-CPU: Use vCPUs × maxShardsPerVcpu × workers (more aggressive)
+                                                   DataSizeInfo dataSizeInfo, OptimizerConfig config) {
         int cpuBasedShards = environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
-        
-        // Also consider size-based
         int machineTypeShards = Math.max(sizeBasedShardCount, cpuBasedShards);
-        
-        // For High-CPU, prefer more shards for better CPU utilization
-        if (estimatedRowCount != null && estimatedRowCount > 0) {
-            // Target smaller records per shard for High-CPU (better parallelism)
-            long targetRecordsPerShard = 20_000L; // Smaller for High-CPU
-            int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecordsPerShard);
+        long targetRecords = config.highCpuTargetRecordsPerShard() > 0 ? config.highCpuTargetRecordsPerShard() : 20_000L;
+        if (!dataSizeInfo.hasSizeInformation && estimatedRowCount != null && estimatedRowCount > 0) {
+            int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecords);
             machineTypeShards = Math.max(machineTypeShards, recordsBasedShards);
         }
         
@@ -134,20 +115,12 @@ public final class MachineTypeBasedOptimizer {
      */
     private static int calculateForHighMemMachine(int sizeBasedShardCount, Long estimatedRowCount,
                                                   ExecutionEnvironment environment, MachineProfile profile,
-                                                  DataSizeInfo dataSizeInfo) {
-        // High-Memory: Use vCPUs × shardsPerVcpu × workers (conservative)
+                                                  DataSizeInfo dataSizeInfo, OptimizerConfig config) {
         int cpuBasedShards = environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
-        
-        // For High-Memory, prefer fewer shards with larger records per shard
-        // Start with the minimum of size-based and CPU-based to prefer fewer shards
         int machineTypeShards = Math.min(sizeBasedShardCount, cpuBasedShards);
-        
-        if (estimatedRowCount != null && estimatedRowCount > 0) {
-            // Target larger records per shard for High-Memory (memory-efficient)
-            long targetRecordsPerShard = 100_000L; // Larger for High-Memory
-            int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecordsPerShard);
-            // For High-Memory, prefer fewer shards: take the minimum of all options
-            // This ensures we don't create more shards than necessary, optimizing for memory
+        long targetRecords = config.highMemTargetRecordsPerShard() > 0 ? config.highMemTargetRecordsPerShard() : 100_000L;
+        if (!dataSizeInfo.hasSizeInformation && estimatedRowCount != null && estimatedRowCount > 0) {
+            int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecords);
             machineTypeShards = Math.min(machineTypeShards, Math.min(sizeBasedShardCount, recordsBasedShards));
         }
         
@@ -165,22 +138,16 @@ public final class MachineTypeBasedOptimizer {
      */
     private static int calculateForStandardMachine(int sizeBasedShardCount, Long estimatedRowCount,
                                                     ExecutionEnvironment environment, MachineProfile profile,
-                                                    DataSizeInfo dataSizeInfo) {
-        // Standard: Calculate based on data size first, vCPUs is a constraint (max), not a target
+                                                    DataSizeInfo dataSizeInfo, OptimizerConfig config) {
         int machineTypeShards = sizeBasedShardCount;
-        
-        // Calculate CPU-based maximum (this is a constraint, not a target)
         int maxShardsFromCpu = environment.workerCount * environment.virtualCpus * profile.maxShardsPerVcpu();
-        
-        if (estimatedRowCount != null && estimatedRowCount > 0) {
-            // Standard machines: balanced records per shard
-            long targetRecordsPerShard = 50_000L; // Balanced for standard
-            int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecordsPerShard);
-            // Use data-based calculation (size or records), not CPU-based
+        long targetRecords = config.standardTargetRecordsPerShard() > 0 ? config.standardTargetRecordsPerShard() : 50_000L;
+        if (!dataSizeInfo.hasSizeInformation && estimatedRowCount != null && estimatedRowCount > 0) {
+            int recordsBasedShards = (int) Math.ceil((double) estimatedRowCount / targetRecords);
             machineTypeShards = Math.max(sizeBasedShardCount, recordsBasedShards);
         }
         
-        // Recommended safe shards for standard: total vCPUs (workers × vCPUs) so work distributes across all cores.
+        // Minimum for parallelism: total vCPUs so work distributes across cores.
         // E.g. n2-standard-4: 1 worker→4, 2 workers→8, 4 workers→16. Capped by profile max.
         int totalVcpus = environment.workerCount * environment.virtualCpus;
         int minShardsForParallelism = Math.min(Math.max(1, totalVcpus), maxShardsFromCpu);
@@ -190,39 +157,26 @@ public final class MachineTypeBasedOptimizer {
         machineTypeShards = Math.min(machineTypeShards, maxShardsFromCpu);
         
         String envName = environment.cloudProvider.name();
-        log.info("[ENV: {}] Standard machine optimization: data-based={}, records-based={}, min-parallelism={}, max-from-cpu={}, final={}",
-                envName, sizeBasedShardCount, 
-                (estimatedRowCount != null && estimatedRowCount > 0) ? (int) Math.ceil((double) estimatedRowCount / 50_000L) : 0,
-                minShardsForParallelism, maxShardsFromCpu, machineTypeShards);
+        log.info("[ENV: {}] Standard machine optimization: data-based={}, min-parallelism={}, max-from-cpu={}, final={}",
+                envName, sizeBasedShardCount, minShardsForParallelism, maxShardsFromCpu, machineTypeShards);
         
         return machineTypeShards;
     }
     
     /**
-     * Calculates minimum shards needed based on data size to ensure proper distribution.
+     * Minimum shards for data: prefer data size (MB); use record count only when size is not available.
      */
     private static int calculateMinimumShardsForDataSize(Long estimatedRowCount, DataSizeInfo dataSizeInfo,
-                                                       ExecutionEnvironment environment) {
-        if (estimatedRowCount == null || estimatedRowCount <= 0) {
-            return 1;
+                                                       ExecutionEnvironment environment, OptimizerConfig config) {
+        int minShards = 1;
+        if (dataSizeInfo.hasSizeInformation && dataSizeInfo.totalSizeMb != null && dataSizeInfo.totalSizeMb > 0) {
+            double maxMb = config.maxMbPerShard() > 0 ? config.maxMbPerShard() : 500.0;
+            minShards = (int) Math.ceil(dataSizeInfo.totalSizeMb / maxMb);
+        } else if (estimatedRowCount != null && estimatedRowCount > 0) {
+            long maxRecords = config.fallbackMaxRecordsPerShard() > 0 ? config.fallbackMaxRecordsPerShard() : 200_000L;
+            minShards = (int) Math.ceil((double) estimatedRowCount / maxRecords);
         }
-        
-        // Ensure we have enough shards to distribute the data reasonably
-        // Target: maximum 200K records per shard (safety limit)
-        long maxRecordsPerShard = 200_000L;
-        int minShards = (int) Math.ceil((double) estimatedRowCount / maxRecordsPerShard);
-        
-        // Also consider data size (if available)
-        if (dataSizeInfo.hasSizeInformation && dataSizeInfo.totalSizeMb != null) {
-            // Ensure we don't exceed 500 MB per shard
-            double maxMbPerShard = 500.0;
-            int minShardsFromSize = (int) Math.ceil(dataSizeInfo.totalSizeMb / maxMbPerShard);
-            minShards = Math.max(minShards, minShardsFromSize);
-        }
-        
-        // Ensure minimum for parallelism
         minShards = Math.max(minShards, environment.workerCount);
-        
         return minShards;
     }
 }

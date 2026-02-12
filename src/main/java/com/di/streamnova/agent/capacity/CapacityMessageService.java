@@ -18,13 +18,13 @@ public class CapacityMessageService {
 
     private final MetricsLearningService metricsLearningService;
 
-    @Value("${streamnova.capacity.resource-limited-message:Due to minimal resources, the request cannot be processed. Please retry later.}")
+    @Value("${streamnova.capacity.resource-limited-message}")
     private String resourceLimitedMessage;
 
-    @Value("${streamnova.capacity.retry-after-sec:60}")
+    @Value("${streamnova.capacity.retry-after-sec}")
     private int retryAfterSec;
 
-    @Value("${streamnova.capacity.shards-not-available-message:Not enough shards available; please wait for full availability.}")
+    @Value("${streamnova.capacity.shards-not-available-message}")
     private String shardsNotAvailableMessage;
 
     /** Builds the response body for 429 (resource limit). */

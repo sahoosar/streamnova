@@ -18,7 +18,8 @@ public final class UnifiedCalculator {
             Long estimatedRowCount,
             Integer averageRowSizeBytes,
             Double targetMbPerShard,
-            Integer databasePoolMaxSize) {
+            Integer databasePoolMaxSize,
+            OptimizerConfig optimizerConfig) {
 
         MachineProfile profile = MachineProfileProvider.getProfile(environment.machineType);
         String envName = environment.cloudProvider.name();
@@ -41,7 +42,7 @@ public final class UnifiedCalculator {
 
         int optimizedShardCount = MachineTypeBasedOptimizer.optimizeBasedOnMachineType(
                 sizeBasedShardCount, estimatedRowCount, environment, profile,
-                databasePoolMaxSize, dataSizeInfo);
+                databasePoolMaxSize, dataSizeInfo, optimizerConfig);
 
         optimizedShardCount = CostOptimizer.optimizeForCost(
                 optimizedShardCount, environment, sizeBasedShardCount);

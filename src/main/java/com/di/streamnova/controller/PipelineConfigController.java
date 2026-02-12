@@ -30,7 +30,7 @@ public class PipelineConfigController {
 
     private final PipelineConfigService pipelineConfigService;
 
-    @Value("${streamnova.statistics.supported-source-types:postgres}")
+    @Value("${streamnova.statistics.supported-source-types}")
     private String supportedSourceTypesConfig;
 
     /**

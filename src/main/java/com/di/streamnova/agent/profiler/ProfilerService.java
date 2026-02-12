@@ -4,6 +4,7 @@ import com.di.streamnova.config.PipelineConfigService;
 import com.di.streamnova.handler.jdbc.postgres.PostgresStatisticsEstimator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
@@ -20,6 +21,11 @@ public class ProfilerService {
 
     private final PipelineConfigService pipelineConfigService;
     private final ProfileStore profileStore;
+
+    @Value("${streamnova.profiler.warm-up-rows}")
+    private int warmUpRows;
+    @Value("${streamnova.profiler.warm-up-fetch-size}")
+    private int warmUpFetchSize;
 
     /**
      * Runs full profiling for the default source: table stats + warm-up read.
@@ -76,7 +82,7 @@ public class ProfilerService {
 
         ThroughputSample throughputSample = null;
         if (runWarmUp && tableProfile.getRowCountEstimate() > 0) {
-            throughputSample = WarmUpReader.runWarmUp(config, tableProfile.getAvgRowSizeBytes());
+            throughputSample = WarmUpReader.runWarmUp(config, tableProfile.getAvgRowSizeBytes(), warmUpRows, warmUpFetchSize);
         }
 
         ProfileResult result = ProfileResult.builder()

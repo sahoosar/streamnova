@@ -55,6 +55,7 @@ import java.util.stream.IntStream;
 public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
 
     private final MetricsCollector metricsCollector;
+    private final ShardPlanner shardPlanner;
 
     @Override
     public String type() {
@@ -95,7 +96,7 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                 log.info("Using config shard plan: shards={}, workers={}, machineType={}", shardCount, workerCount, machineType);
             } else {
                 workerCount = config.getWorkers() != null && config.getWorkers() > 0 ? config.getWorkers() : 1;
-                shardCount = ShardPlanner.suggestShardCountForCandidate(
+                shardCount = shardPlanner.suggestShardCountForCandidate(
                         machineType,
                         workerCount,
                         stats.rowCount(),

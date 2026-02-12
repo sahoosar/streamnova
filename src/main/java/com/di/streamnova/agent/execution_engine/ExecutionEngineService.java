@@ -24,7 +24,7 @@ public class ExecutionEngineService implements ExecutionEngine {
 
     private final DataflowRunnerService dataflowRunnerService;
 
-    @Value("${streamnova.guardrails.allowed-machine-types:}")
+    @Value("${streamnova.guardrails.allowed-machine-types}")
     private String allowedMachineTypesConfig;
 
     private List<String> getAllowedMachineTypesList() {

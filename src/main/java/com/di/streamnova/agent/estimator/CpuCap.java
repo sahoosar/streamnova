@@ -20,10 +20,17 @@ public final class CpuCap {
      * Total capacity = workers × vCPUs × MB_PER_SEC_PER_VCPU.
      */
     public static double getCapMbPerSec(ExecutionPlanOption c) {
+        return getCapMbPerSec(c, MB_PER_SEC_PER_VCPU);
+    }
+
+    /**
+     * Returns the CPU-side throughput cap in MB/s with configurable MB/s per vCPU.
+     */
+    public static double getCapMbPerSec(ExecutionPlanOption c, double mbPerSecPerVcpu) {
         if (c == null) return 0.0;
         int vCpus = Math.max(1, c.getVirtualCpus());
         int workers = Math.max(1, c.getWorkerCount());
-        double cap = workers * vCpus * MB_PER_SEC_PER_VCPU;
+        double cap = workers * vCpus * mbPerSecPerVcpu;
         log.trace("[ESTIMATOR] CPU cap: {} workers × {} vCPUs = {} MB/s", workers, vCpus, cap);
         return cap;
     }

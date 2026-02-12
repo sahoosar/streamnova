@@ -9,6 +9,7 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerA
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
+import com.di.streamnova.agent.execution_planner.MachineLadderProperties;
 import com.di.streamnova.config.YamlPipelineProperties;
 
 @SpringBootApplication(exclude = {
@@ -16,7 +17,8 @@ import com.di.streamnova.config.YamlPipelineProperties;
 		DataSourceTransactionManagerAutoConfiguration.class
 })
 @ConfigurationPropertiesScan
-@EnableConfigurationProperties(YamlPipelineProperties.class)
+@EnableConfigurationProperties({ YamlPipelineProperties.class, MachineLadderProperties.class,
+        com.di.streamnova.agent.shardplanner.ShardPlannerProperties.class })
 public class StreamNovaApplication {
 
 	public static void main(String[] args) {

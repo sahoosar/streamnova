@@ -47,7 +47,7 @@ public class TransactionEventLogger {
      * If not provided, generates a unique ID per instance.
      */
     public TransactionEventLogger(
-            @Value("${spring.application.name:StreamNova}") String applicationName) {
+            @Value("${spring.application.name}") String applicationName) {
         // Generate unique application ID: appName-instanceId
         // This ensures each application instance has a unique ID
         this.applicationId = applicationName + "-" + UUID.randomUUID().toString().substring(0, 8);

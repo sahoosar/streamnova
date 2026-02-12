@@ -25,18 +25,34 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class EstimatorService {
 
-    private static final double DEFAULT_THROUGHPUT_MB_PER_SEC = 50.0;
-    private static final int LEARNING_SIGNALS_LIMIT = 100;
-    private static final int THROUGHPUT_HISTORY_LIMIT = 10;
-
     private final MetricsLearningService metricsLearningService;
 
-    @Value("${streamnova.estimator.usd-per-vcpu-hour.n2:0.031}")
+    @Value("${streamnova.estimator.usd-per-vcpu-hour.n2}")
     private double usdPerVcpuHourN2;
-    @Value("${streamnova.estimator.usd-per-vcpu-hour.n2d:0.027}")
+    @Value("${streamnova.estimator.usd-per-vcpu-hour.n2d}")
     private double usdPerVcpuHourN2d;
-    @Value("${streamnova.estimator.usd-per-vcpu-hour.c3:0.035}")
+    @Value("${streamnova.estimator.usd-per-vcpu-hour.c3}")
     private double usdPerVcpuHourC3;
+
+    @Value("${streamnova.estimator.default-throughput-mb-per-sec}")
+    private double defaultThroughputMbPerSec;
+    @Value("${streamnova.estimator.fallback-duration-sec}")
+    private double fallbackDurationSec;
+    @Value("${streamnova.estimator.learning-signals-limit}")
+    private int learningSignalsLimit;
+    @Value("${streamnova.estimator.throughput-history-limit}")
+    private int throughputHistoryLimit;
+
+    @Value("${streamnova.estimator.source-cap.postgres}")
+    private double sourceCapPostgres;
+    @Value("${streamnova.estimator.source-cap.oracle}")
+    private double sourceCapOracle;
+    @Value("${streamnova.estimator.sink-cap.bq-direct}")
+    private double sinkCapBqDirect;
+    @Value("${streamnova.estimator.sink-cap.gcs-bq}")
+    private double sinkCapGcsBq;
+    @Value("${streamnova.estimator.cpu-cap-mb-per-sec-per-vcpu}")
+    private double cpuCapMbPerSecPerVcpu;
 
     /**
      * Estimates duration and cost for each candidate (backward compatible).
@@ -63,7 +79,7 @@ public class EstimatorService {
         }
         TableProfile profile = context.getProfile();
         LearningSignals signals = metricsLearningService.getLearningSignals(
-                profile.getSourceType(), profile.getSchemaName(), profile.getTableName(), LEARNING_SIGNALS_LIMIT);
+                profile.getSourceType(), profile.getSchemaName(), profile.getTableName(), learningSignalsLimit);
         Map<String, Double> durationCorrection = signals.getDurationCorrectionByMachineFamily() != null
                 ? signals.getDurationCorrectionByMachineFamily() : Map.of();
         Map<String, Double> costCorrection = signals.getCostCorrectionByMachineFamily() != null
@@ -72,18 +88,18 @@ public class EstimatorService {
         double totalMb = context.getTotalMb();
         double measured = context.getMeasuredThroughputMbPerSec();
         double throughputForCap = measured > 0 ? measured : fallbackThroughputFromHistory(profile);
-        double sourceThroughput = SourceCap.effectiveSourceThroughputMbPerSec(throughputForCap, context.getSourceType());
+        double sourceThroughput = SourceCap.effectiveSourceThroughputMbPerSec(throughputForCap, context.getSourceType(), sourceCapPostgres, sourceCapOracle);
         LoadPattern loadPattern = context.getLoadPattern() != null ? context.getLoadPattern() : LoadPattern.DIRECT;
-        double sinkCap = SinkCap.getCapMbPerSec(loadPattern);
+        double sinkCap = SinkCap.getCapMbPerSec(loadPattern, sinkCapBqDirect, sinkCapGcsBq);
 
         List<EstimatedCandidate> out = new ArrayList<>();
         for (ExecutionPlanOption c : candidates) {
-            double cpuCap = CpuCap.getCapMbPerSec(c);
+            double cpuCap = CpuCap.getCapMbPerSec(c, cpuCapMbPerSecPerVcpu);
             int shards = Math.max(1, c.getShardCount());
             int slots = c.getWorkerCount() * Math.max(1, c.getVirtualCpus());
             int effectiveParallelism = Math.min(shards, slots);
             if (effectiveParallelism <= 0) {
-                out.add(buildEstimated(c, 3600.0, estimateCostUsd(3600.0, c, this), 0.0, Bottleneck.PARALLELISM));
+                out.add(buildEstimated(c, fallbackDurationSec, estimateCostUsd(fallbackDurationSec, c, this), 0.0, Bottleneck.PARALLELISM));
                 continue;
             }
             double overheadFactor = 1.0 + (30.0 / slots);
@@ -104,19 +120,19 @@ public class EstimatorService {
                         ? Bottleneck.SOURCE : Bottleneck.PARALLELISM;
             }
 
-            double durationSec = effectiveMbPerSec > 0 ? totalMb / effectiveMbPerSec : 3600.0;
+            double durationSec = effectiveMbPerSec > 0 ? totalMb / effectiveMbPerSec : fallbackDurationSec;
             double costUsd = estimateCostUsd(durationSec, c, this);
             String family = machineFamily(c.getMachineType());
             double durFactor = durationCorrection.getOrDefault(family, 1.0);
             double costFactor = costCorrection.getOrDefault(family, 1.0);
             durationSec *= durFactor;
             costUsd *= costFactor;
-            if (!Double.isFinite(durationSec) || durationSec < 0) durationSec = 3600.0;
+            if (!Double.isFinite(durationSec) || durationSec < 0) durationSec = fallbackDurationSec;
             if (!Double.isFinite(costUsd) || costUsd < 0) costUsd = 0.0;
             out.add(buildEstimated(c, durationSec, costUsd, effectiveMbPerSec, bottleneck));
         }
         if (!durationCorrection.isEmpty() || !costCorrection.isEmpty()) {
-            log.debug("[ESTIMATOR] Applied learning corrections (duration/cost by family) from {} past runs", LEARNING_SIGNALS_LIMIT);
+            log.debug("[ESTIMATOR] Applied learning corrections (duration/cost by family) from {} past runs", learningSignalsLimit);
         }
         log.debug("[ESTIMATOR] Estimated {} candidates (source cap applied, loadPattern={})", out.size(), loadPattern);
         return out;
@@ -158,18 +174,18 @@ public class EstimatorService {
 
     /** When no warm-up throughput is available, use average of recent throughput profiles for this table if any. */
     private double fallbackThroughputFromHistory(TableProfile profile) {
-        if (profile == null) return DEFAULT_THROUGHPUT_MB_PER_SEC;
+        if (profile == null) return defaultThroughputMbPerSec;
         List<ThroughputProfile> profiles = metricsLearningService.getThroughputProfiles(
-                profile.getSourceType(), profile.getSchemaName(), profile.getTableName(), THROUGHPUT_HISTORY_LIMIT);
-        if (profiles == null || profiles.isEmpty()) return DEFAULT_THROUGHPUT_MB_PER_SEC;
+                profile.getSourceType(), profile.getSchemaName(), profile.getTableName(), throughputHistoryLimit);
+        if (profiles == null || profiles.isEmpty()) return defaultThroughputMbPerSec;
         double avg = profiles.stream()
                 .mapToDouble(ThroughputProfile::getThroughputMbPerSec)
                 .filter(t -> t > 0)
                 .average()
-                .orElse(DEFAULT_THROUGHPUT_MB_PER_SEC);
+                .orElse(defaultThroughputMbPerSec);
         if (avg > 0) {
             log.debug("[ESTIMATOR] Using historical throughput fallback: {} MB/s (from {} profiles)", avg, profiles.size());
         }
-        return avg > 0 ? avg : DEFAULT_THROUGHPUT_MB_PER_SEC;
+        return avg > 0 ? avg : defaultThroughputMbPerSec;
     }
 }

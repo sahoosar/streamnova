@@ -57,7 +57,7 @@ public class PipelineConfigService {
     @Value("${streamnova.pipeline.config-file:}")
     private String configFilePath;
 
-    @Value("${streamnova.statistics.supported-source-types:postgres}")
+    @Value("${streamnova.statistics.supported-source-types}")
     private String supportedSourceTypesConfig;
 
     /** Log once when config-file is not set. */

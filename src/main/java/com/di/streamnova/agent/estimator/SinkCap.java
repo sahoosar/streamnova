@@ -20,17 +20,24 @@ public final class SinkCap {
      * Returns the sink throughput cap in MB/s for the given load pattern.
      */
     public static double getCapMbPerSec(LoadPattern loadPattern) {
+        return getCapMbPerSec(loadPattern, BQ_DIRECT_CAP_MB_PER_SEC, BQ_LOAD_FROM_GCS_CAP_MB_PER_SEC);
+    }
+
+    /**
+     * Returns the sink throughput cap in MB/s for the given load pattern with configurable caps.
+     */
+    public static double getCapMbPerSec(LoadPattern loadPattern, double bqDirectCapMbPerSec, double gcsBqCapMbPerSec) {
         if (loadPattern == null) {
-            return BQ_DIRECT_CAP_MB_PER_SEC;
+            return bqDirectCapMbPerSec;
         }
         switch (loadPattern) {
             case GCS_BQ:
-                log.debug("[ESTIMATOR] Sink cap: GCS+BQ = {} MB/s", BQ_LOAD_FROM_GCS_CAP_MB_PER_SEC);
-                return BQ_LOAD_FROM_GCS_CAP_MB_PER_SEC;
+                log.debug("[ESTIMATOR] Sink cap: GCS+BQ = {} MB/s", gcsBqCapMbPerSec);
+                return gcsBqCapMbPerSec;
             case DIRECT:
             default:
-                log.debug("[ESTIMATOR] Sink cap: BQ direct = {} MB/s", BQ_DIRECT_CAP_MB_PER_SEC);
-                return BQ_DIRECT_CAP_MB_PER_SEC;
+                log.debug("[ESTIMATOR] Sink cap: BQ direct = {} MB/s", bqDirectCapMbPerSec);
+                return bqDirectCapMbPerSec;
         }
     }
 }

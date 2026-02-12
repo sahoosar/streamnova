@@ -23,13 +23,19 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class AdaptiveExecutionPlannerService {
 
-    @Value("${streamnova.recommend.max-candidates:8}")
+    private final MachineLadder machineLadder;
+    private final ShardPlanner shardPlanner;
+
+    @Value("${streamnova.recommend.max-candidates}")
     private int defaultMaxCandidates;
 
-    @Value("${streamnova.recommend.max-workers:8}")
+    @Value("${streamnova.recommend.max-workers}")
     private int maxWorkers;
 
-    @Value("${streamnova.recommend.fallback-pool-size:4}")
+    @Value("${streamnova.recommend.max-workers-cap}")
+    private int maxWorkersCap;
+
+    @Value("${streamnova.recommend.fallback-pool-size}")
     private int fallbackPoolSize;
 
     /**
@@ -86,23 +92,24 @@ public class AdaptiveExecutionPlannerService {
             log.debug("[CANDIDATES] Pool cap applied: shards ≤ 80% of {} = {}", databasePoolMaxSize, (int) Math.floor(databasePoolMaxSize * 0.8));
         }
 
-        // Use n2 series first, then n2d, then c3 (family order)
+        // Use n2d first, then n2, then c3 (family order from config)
         List<List<String>> tiers = machineFamily != null && !machineFamily.isBlank()
-                ? List.of(MachineLadder.getLadder(machineFamily))
+                ? List.of(machineLadder.getLadder(machineFamily))
                 : List.of(
-                        MachineLadder.getN2Ladder(),
-                        MachineLadder.getN2dLadder(),
-                        MachineLadder.getC3Ladder());
+                        machineLadder.getN2dLadder(),
+                        machineLadder.getN2Ladder(),
+                        machineLadder.getC3Ladder());
 
         for (List<String> machineTypes : tiers) {
             if (candidates.size() >= cap) break;
             for (String machineType : machineTypes) {
                 if (candidates.size() >= cap) break;
                 int vCpus = MachineLadder.extractVcpus(machineType);
-                List<Integer> workerCounts = WorkerScaling.getReducedWorkerCandidates(maxWorkers);
+                int effectiveMaxWorkers = Math.min(maxWorkers, maxWorkersCap);
+                List<Integer> workerCounts = WorkerScaling.getReducedWorkerCandidates(effectiveMaxWorkers);
                 for (int workers : workerCounts) {
                     if (candidates.size() >= cap) break;
-                    int shards = ShardPlanner.suggestShardCountForCandidate(
+                    int shards = shardPlanner.suggestShardCountForCandidate(
                             machineType, workers,
                             tableProfile.getRowCountEstimate(), tableProfile.getAvgRowSizeBytes(),
                             databasePoolMaxSize);
@@ -123,7 +130,7 @@ public class AdaptiveExecutionPlannerService {
             }
         }
 
-        log.info("[CANDIDATES] Generated {} candidates for table {} (n2 first, then n2d, then c3; profileRunId={})",
+        log.info("[CANDIDATES] Generated {} candidates for table {} (n2d first, then n2, then c3; profileRunId={})",
                 candidates.size(), tableProfile.getTableName(), profileRunId);
 
         return AdaptivePlanResult.builder()
