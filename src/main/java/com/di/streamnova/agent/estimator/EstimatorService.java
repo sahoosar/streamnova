@@ -55,8 +55,8 @@ public class EstimatorService {
     private double sinkCapBqDirect;
     @Value("${streamnova.estimator.sink-cap.gcs-bq}")
     private double sinkCapGcsBq;
-    @Value("${streamnova.estimator.cpu-cap-mb-per-sec-per-vcpu}")
-    private double cpuCapMbPerSecPerVcpu;
+
+    private final CpuCap cpuCap;
 
     /** Ordered prefixes for machine family (first match wins; e.g. n2d before n2). From application.properties. */
     @Value("${streamnova.estimator.machine-family-prefixes}")
@@ -123,7 +123,7 @@ public class EstimatorService {
 
         List<EstimatedCandidate> out = new ArrayList<>();
         for (ExecutionPlanOption c : candidates) {
-            double cpuCap = CpuCap.getCapMbPerSec(c, cpuCapMbPerSecPerVcpu);
+            double cap = cpuCap.getCapMbPerSec(c);
             int shards = Math.max(1, c.getShardCount());
             int slots = c.getWorkerCount() * Math.max(1, c.getVirtualCpus());
             int effectiveParallelism = Math.min(shards, slots);
@@ -136,8 +136,8 @@ public class EstimatorService {
 
             double effectiveMbPerSec = parallelThroughput;
             Bottleneck bottleneck = Bottleneck.PARALLELISM;
-            if (cpuCap < effectiveMbPerSec) {
-                effectiveMbPerSec = cpuCap;
+            if (cap < effectiveMbPerSec) {
+                effectiveMbPerSec = cap;
                 bottleneck = Bottleneck.CPU;
             }
             if (sinkCap < effectiveMbPerSec) {
