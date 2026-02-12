@@ -55,5 +55,5 @@ Agent-only shard planning: suggests shard count for a candidate (machine type + 
 
 ## References
 
-- Candidate generation: `agent.adaptive_execution_planner.AdaptiveExecutionPlannerService` calls `ShardPlanner.suggestShardCountForCandidate(...)` with pool size from config or request.
+- Candidate generation: `agent.execution_planner.AdaptiveExecutionPlannerService` calls `ShardPlanner.suggestShardCountForCandidate(...)` with pool size from config or request.
 - Pipeline config (connection, table) is separate; when executing with a candidate, shards/workers/machineType/pool come from the candidate (see DataflowRunnerService and pipeline config YAML comments).

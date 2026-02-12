@@ -1,6 +1,6 @@
 package com.di.streamnova.agent.execution_engine;
 
-import com.di.streamnova.agent.adaptive_execution_planner.ExecutionPlanOption;
+import com.di.streamnova.agent.execution_planner.ExecutionPlanOption;
 import com.di.streamnova.agent.capacity.CapacityMessageService;
 import com.di.streamnova.agent.capacity.ResourceLimitResponse;
 import com.di.streamnova.agent.capacity.ShardAvailabilityService;

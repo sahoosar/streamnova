@@ -1,6 +1,6 @@
 package com.di.streamnova.agent.estimator;
 
-import com.di.streamnova.agent.adaptive_execution_planner.ExecutionPlanOption;
+import com.di.streamnova.agent.execution_planner.ExecutionPlanOption;
 import com.di.streamnova.agent.metrics.LearningSignals;
 import com.di.streamnova.agent.metrics.MetricsLearningService;
 import com.di.streamnova.agent.metrics.ThroughputProfile;

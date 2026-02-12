@@ -1,4 +1,4 @@
-package com.di.streamnova.agent.adaptive_execution_planner;
+package com.di.streamnova.agent.execution_planner;
 
 import lombok.extern.slf4j.Slf4j;
 

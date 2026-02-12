@@ -2,12 +2,14 @@
 
 Orchestrator for a fully autonomous batch loading system: plan → optimize cost vs time → execute → learn.
 
+**Design & flow diagrams:** See **DESIGN_AND_FLOW.md** (project root) for high-level design, end-to-end flow, recommend/execute sequences, config override, learning loop, and shard planning flow.
+
 ## Segments (one folder per segment)
 
 | Segment | Package | Purpose |
 |--------|---------|---------|
 | **Profiler** | `agent.profiler` | Table profiling (row count, row size), Postgres warm-up throughput discovery |
-| **Candidate Generator** | `agent.adaptive_execution_planner` | Machine ladder (n2→n2d→c3), worker scaling, shard planning |
+| **Candidate Generator** | `agent.execution_planner` | Machine ladder (n2→n2d→c3), worker scaling, shard planning |
 | **Estimator** | `agent.estimator` | Time & cost prediction per candidate (heuristic; USD internal) |
 | **Recommender** | `agent.recommender` | COST_OPTIMAL / FAST_LOAD / BALANCED; picks best candidate by mode |
 | **Execution Engine** | `agent.execution_engine` | ExecutionEngineService + **POST /api/agent/execute** (run with candidate; optional executionRunId updates status). See EXECUTION_ENGINE_STATUS.md. |

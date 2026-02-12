@@ -1,7 +1,7 @@
 package com.di.streamnova.agent.recommender;
 
-import com.di.streamnova.agent.adaptive_execution_planner.AdaptivePlanResult;
-import com.di.streamnova.agent.adaptive_execution_planner.AdaptiveExecutionPlannerService;
+import com.di.streamnova.agent.execution_planner.AdaptivePlanResult;
+import com.di.streamnova.agent.execution_planner.AdaptiveExecutionPlannerService;
 import com.di.streamnova.agent.capacity.CapacityMessageService;
 import com.di.streamnova.agent.capacity.ResourceLimitResponse;
 import com.di.streamnova.agent.estimator.EstimationContext;

@@ -1,4 +1,4 @@
-package com.di.streamnova.agent.adaptive_execution_planner;
+package com.di.streamnova.agent.execution_planner;
 
 import com.di.streamnova.agent.profiler.TableProfile;
 import com.di.streamnova.agent.shardplanner.PoolSizeCalculator;

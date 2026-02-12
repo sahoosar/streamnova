@@ -8,7 +8,7 @@ import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.TypeDescriptors;
 import org.slf4j.MDC;
 
-import com.di.streamnova.agent.adaptive_execution_planner.ExecutionPlanOption;
+import com.di.streamnova.agent.execution_planner.ExecutionPlanOption;
 import com.di.streamnova.aspect.LogTransaction;
 import com.di.streamnova.config.*;
 import org.apache.beam.runners.dataflow.DataflowPipelineJob;
