@@ -1,0 +1,64 @@
+# ============================================================
+# StreamNova - Tracking & Validation Defaults
+# File name: pipeline-tracking.yml
+# ============================================================
+# Purpose:
+# - Centralize tracking tables, runId generation, labels, and default validations
+# - Imported/merged with pipeline templates at runtime
+# ============================================================
+
+pipeline:
+  tracking:
+    # Run identity
+    runIdStrategy: "UUID"                 # UUID / TIMESTAMP / EXTERNAL
+
+    # Where to store execution history
+    storeRunMetricsToDb: true
+
+    # Tracking tables (BigQuery or DB depending on implementation)
+    runMetricsTable: "streamnova.load_run_metrics"
+    stageMetricsTable: "streamnova.load_stage_metrics"
+    fileManifestTable: "streamnova.load_file_manifest"
+
+    # Persist runtime-resolved config for audit/replay
+    includeEffectiveConfig: true
+
+    # Persist helpful correlation identifiers
+    includeSourceIdentity: true           # sourceKey + schema/table + query hash
+    includeDestinationIdentity: true      # gcs/bq target identity
+    includeSourceBatchId: true            # for GCS-based sources
+    includePlannerDecision: true          # machine/workers/shards chosen
+
+    # Capture job IDs where applicable
+    captureBigQueryJobIds: true
+    captureDataflowJobIds: true
+
+    # Default labels (added to logs / jobs where supported)
+    labels:
+      product: "streamnova"
+      environment: "{env}"               # dev / qa / prod (runtime fill)
+      owner: "{owner}"                   # optional (runtime fill)
+
+  validationDefaults:
+    # Common safe defaults (templates may override)
+    failOnMismatch: true
+    tolerancePct: 0.0
+
+    # Manifest checks (if manifest enabled in pipeline)
+    validateManifestFileList: true
+    validateManifestRowCounts: false      # enable only if your manifest includes row counts
+
+    # Row-count comparisons (templates may enable/disable)
+    compareReadVsWriteRowCount: true
+    compareGcsVsBqRowCount: true
+
+  guardrails:
+    # Optional global guardrails used across pipelines
+    allowedFileFormats: ["PARQUET", "AVRO", "CSV", "JSONL"]
+
+    # Optional bucket/dataset allowlists (enforce in your resolver)
+    enforceOutputBasePath: true
+    enforceStageBasePath: true
+    enforceBigQueryDatasetAllowlist: false
+    allowedBigQueryDatasets: []
+    allowedBuckets: []

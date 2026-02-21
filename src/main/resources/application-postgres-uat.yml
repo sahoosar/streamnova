@@ -1,0 +1,20 @@
+# ============================================================================
+# Profile: postgres-uat (PostgreSQL UAT environment)
+# ============================================================================
+# Same as postgres profile with UAT overrides.
+# Activate: --spring.profiles.active=postgres-uat
+#
+# Override with your UAT values or set env vars: POSTGRES_UAT_DATABASE,
+# POSTGRES_UAT_USERNAME, POSTGRES_UAT_PASSWORD, POSTGRES_UAT_TABLE.
+#
+streamnova:
+  pipeline:
+    listener-config-file: classpath:pipeline_listener_config-uat.yml
+
+pipeline:
+  config:
+    source:
+      jdbc-url: jdbc:postgresql://uat-db-host:5432/${POSTGRES_UAT_DATABASE:marketdb}
+      username: ${POSTGRES_UAT_USERNAME:uat_user}
+      password: ${POSTGRES_UAT_PASSWORD:}
+      table: ${POSTGRES_UAT_TABLE:market_summary}

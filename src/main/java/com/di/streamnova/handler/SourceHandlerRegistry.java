@@ -64,11 +64,13 @@ public class SourceHandlerRegistry {
     }
 
     /**
-     * Retrieves a handler for the given source type.
-     * 
-     * @param type the source type (case-insensitive, will be normalized)
+     * Retrieves the handler for the given source type. The pipeline is not fixed to one handler:
+     * config supplies the type (postgres, oracle, gcs, etc.) and this returns the matching handler
+     * (PostgresHandler, OracleHandler, GCSHandler, etc.) so execution runs accordingly.
+     *
+     * @param type the source type from pipeline config (case-insensitive)
      * @param <T> the configuration type expected by the handler
-     * @return the handler for the given type
+     * @return the handler for that type
      * @throws IllegalArgumentException if no handler is found for the given type
      */
     @SuppressWarnings("unchecked")
@@ -101,7 +103,7 @@ public class SourceHandlerRegistry {
 
     /**
      * Checks if a handler is registered for the given type.
-     * 
+     *
      * @param type the source type to check
      * @return true if a handler is registered for this type
      */
@@ -110,6 +112,21 @@ public class SourceHandlerRegistry {
             return false;
         }
         return handlersByType.containsKey(normalizeType(type));
+    }
+
+    /**
+     * Returns the handler class name (e.g. PostgresHandler, GCSHandler) for the given type, for logging.
+     * Enables automatic detection: config says type=postgres → this returns PostgresHandler.
+     *
+     * @param type the source type (e.g. postgres, oracle, gcs)
+     * @return the simple class name of the handler for that type, or empty if no handler registered
+     */
+    public Optional<String> getHandlerClassName(String type) {
+        if (type == null || type.isBlank()) {
+            return Optional.empty();
+        }
+        SourceHandler<?> handler = handlersByType.get(normalizeType(type));
+        return handler == null ? Optional.empty() : Optional.of(handler.getClass().getSimpleName());
     }
 
     /**

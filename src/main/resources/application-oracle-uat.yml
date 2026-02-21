@@ -1,0 +1,20 @@
+# ============================================================================
+# Profile: oracle-uat (Oracle UAT environment)
+# ============================================================================
+# Same as oracle profile with UAT overrides.
+# Activate: --spring.profiles.active=oracle-uat
+#
+# Override with your UAT values or set env vars: ORACLE_UAT_USERNAME,
+# ORACLE_UAT_PASSWORD, ORACLE_UAT_TABLE.
+#
+streamnova:
+  pipeline:
+    listener-config-file: classpath:pipeline_listener_config-uat.yml
+
+pipeline:
+  config:
+    source:
+      jdbc-url: jdbc:oracle:thin:@uat-db-host:1521:UAT
+      username: ${ORACLE_UAT_USERNAME:uat_user}
+      password: ${ORACLE_UAT_PASSWORD:}
+      table: ${ORACLE_UAT_TABLE:schema.some_table}

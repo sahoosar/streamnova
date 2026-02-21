@@ -1,0 +1,20 @@
+# ---------- Listener config: UAT environment (2-stage / 3-stage) ----------
+# Loaded when spring.profiles.active includes uat (e.g. postgres,uat or oracle,uat).
+# Override actions or event types per UAT requirements.
+pipeline:
+  config:
+    listeners:
+      "2-stage":
+        actions:
+          - action: SOURCE_READ
+            eventType: LOAD_SOURCE_READ
+          - action: TARGET_WRITE
+            eventType: LOAD_TARGET_WRITE
+      "3-stage":
+        actions:
+          - action: SOURCE_READ
+            eventType: LOAD_SOURCE_READ
+          - action: INTERMEDIATE_WRITE
+            eventType: LOAD_INTERMEDIATE_WRITE
+          - action: TARGET_WRITE
+            eventType: LOAD_TARGET_WRITE

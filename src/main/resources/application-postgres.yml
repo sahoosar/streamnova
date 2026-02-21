@@ -1,0 +1,10 @@
+# ============================================================================
+# Profile: postgres (PostgreSQL pipeline – generic / dev)
+# ============================================================================
+# Activate: --spring.profiles.active=postgres (default if none set)
+# For SIT/UAT/PROD use: postgres-sit | postgres-uat | postgres-prod
+# Pipeline config: use event configs only (see application.yml streamnova.pipeline.event-config-files).
+#
+streamnova:
+  pipeline:
+    expected-handler: postgres   # Pipeline runs only when source is postgres

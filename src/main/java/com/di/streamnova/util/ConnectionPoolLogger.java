@@ -20,12 +20,24 @@ public final class ConnectionPoolLogger {
 
     /** Separator line to segregate connection/pool logs from the rest of the log output. */
     public static final String CONNECTION_LOG_SEPARATOR =
-            "................................................................................";
+            "================================================================================";
 
     private ConnectionPoolLogger() {}
 
-    /** Logs a dotted separator line before/after a block of connection-related logs. */
+    /** Logs a separator line before/after a block of datasource/connection-pool logs. */
     public static void logConnectionSectionSeparator() {
+        log.info(CONNECTION_LOG_SEPARATOR);
+    }
+
+    /** Logs the start of a datasource/connection-pool section (separator + title). */
+    public static void logDatasourceSectionStart(String title) {
+        log.info(CONNECTION_LOG_SEPARATOR);
+        log.info("[POOL] DATASOURCE / CONNECTION POOL  |  {}", title != null ? title : "");
+        log.info(CONNECTION_LOG_SEPARATOR);
+    }
+
+    /** Logs the end of a datasource/connection-pool section (separator). */
+    public static void logDatasourceSectionEnd() {
         log.info(CONNECTION_LOG_SEPARATOR);
     }
 

@@ -1,0 +1,20 @@
+# ============================================================================
+# Profile: postgres-sit (PostgreSQL SIT environment)
+# ============================================================================
+# Same as postgres profile with SIT overrides.
+# Activate: --spring.profiles.active=postgres-sit
+#
+# Override with your SIT values or set env vars: POSTGRES_SIT_DATABASE,
+# POSTGRES_SIT_USERNAME, POSTGRES_SIT_PASSWORD, POSTGRES_SIT_TABLE.
+#
+streamnova:
+  pipeline:
+    listener-config-file: classpath:pipeline_listener_config-sit.yml
+
+pipeline:
+  config:
+    source:
+      jdbc-url: jdbc:postgresql://sit-db-host:5432/${POSTGRES_SIT_DATABASE:marketdb}
+      username: ${POSTGRES_SIT_USERNAME:sit_user}
+      password: ${POSTGRES_SIT_PASSWORD:}
+      table: ${POSTGRES_SIT_TABLE:market_summary}

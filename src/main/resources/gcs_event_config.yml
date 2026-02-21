@@ -1,0 +1,52 @@
+# Pipeline config for GCS: source (gcs_inputs), intermediate (gcs_stage), and destination (gcs).
+# Feeds: pipeline-db-to-gcs-template.yml, pipeline-gcs-to-gcs-template.yml, pipeline-db-to-gcs-to-bq-template.yml.
+# Placeholders: inputBucket/inputPrefix/schema* (gcs-to-gcs), outputBucket/outputBasePath/fileFormat (db-to-gcs, gcs-to-gcs),
+# stageBucket/stageRegion/stageBasePath (db-to-gcs-to-bq intermediate GCS stage).
+pipeline:
+  config:
+    sources:
+      gcs_inputs:
+        type: gcs
+        gcsPath: gs://your-bucket/input/
+        schemaPath: gs://my-bucket/schemas/employees_schema.json
+        fileFormat: PARQUET
+        # GCS-to-GCS template placeholders: input location and schema path components
+        inputBucket: your-bucket
+        inputPrefix: input/
+        schemaBucket: my-bucket
+        schemaPrefix: schemas/
+        schemaName: employees_schema
+        # sourceBatchId is typically set at runtime per batch; optional default here
+        # sourceBatchId: batch-1
+
+    # GCS intermediate stage for 3-stage pipeline (db-to-gcs-to-bq). All attributes below feed pipeline-db-to-gcs-to-bq-template.yml intermediates.gcs_stage.
+    intermediates:
+      gcs_stage:
+        handlerType: gcs
+        gcsPath: gs://your-bucket/stage/
+        # stageBucket, stageRegion, stageBasePath (template placeholders)
+        bucket: your-bucket
+        region: us-central1
+        basePath: stage/
+        # Output format and write semantics (same placeholders as destinations.gcs)
+        fileFormat: PARQUET    # PARQUET | AVRO | CSV | JSONL
+        compression: SNAPPY
+        targetFileSizeMb: 64
+        writeMode: APPEND     # APPEND | OVERWRITE
+        traceEnabled: true    # lineage columns (_streamnova_run_id, etc.)
+
+    destinations:
+      gcs:
+        type: gcs
+        gcsPath: gs://your-bucket/export/
+        # Bucket/path for db-to-gcs and gcs-to-gcs (outputBucket, outputBasePath)
+        bucket: your-bucket
+        basePath: export
+        # Output format and write semantics (both templates)
+        fileFormat: PARQUET    # PARQUET | AVRO | CSV | JSONL
+        compression: SNAPPY    # SNAPPY (parquet), GZIP (csv/json)
+        targetFileSizeMb: 64
+        writeMode: APPEND      # APPEND | OVERWRITE
+        traceEnabled: true     # lineage columns (_streamnova_run_id, etc.)
+
+

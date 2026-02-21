@@ -12,7 +12,7 @@ Orchestrator for a fully autonomous batch loading system: plan → optimize cost
 | **Candidate Generator** | `agent.execution_planner` | Machine ladder (n2→n2d→c3), worker scaling, shard planning |
 | **Estimator** | `agent.estimator` | Time & cost prediction per candidate (heuristic; USD internal) |
 | **Recommender** | `agent.recommender` | COST_OPTIMAL / FAST_LOAD / BALANCED; picks best candidate by mode |
-| **Execution Engine** | `agent.execution_engine` | ExecutionEngineService + **POST /api/agent/execute** (run with candidate; optional executionRunId updates status). See EXECUTION_ENGINE_STATUS.md. |
+| **Execution Engine** | `agent.execution_engine` | ExecutionEngineService + **POST /api/agent/execute** (run with candidate; optional executionRunId, optional **source** for handler choice). **GET /api/agent/pipeline-handlers** for agentic handler discovery. See EXECUTION_ENGINE_STATUS.md. |
 | **Metrics & Learning Store** | `agent.metrics` | Estimates vs actuals, throughput profiles, execution status; store + REST API |
 
 ## Profiler (implemented)
@@ -68,4 +68,20 @@ Apply the schema with Flyway/Liquibase when implementing persistent Metrics & Le
 - **InMemoryMetricsLearningStore** – in-memory implementation (production: use JDBC with AGENT_TABLES_SCHEMA.sql).
 - **MetricsLearningService** – recordRunStarted, recordRunFinished, recordEstimateVsActual, recordThroughputProfile; getEstimatesVsActuals, getThroughputProfiles, getRecentExecutionStatuses, getExecutionStatus; **getLearningSignals** (duration/cost correction by machine family, success count by machine type).
 - **Learning loop** – After successful runs, POST execution-outcome records estimate vs actual. On each recommend, **EstimatorService** uses getLearningSignals to apply duration/cost correction factors per machine family (n2, n2d, c3) from past actuals so estimates improve over time. **RecommenderService** prefers candidates whose machine type has more successful runs (tie-break when mode score is equal). Thus after a few rounds the agent converges toward suggesting the candidate that is both predicted and historically appropriate.
-- **REST** – `GET /api/agent/metrics/estimates-vs-actuals`, `GET /api/agent/metrics/throughput-profiles`, `GET /api/agent/metrics/execution-status`; `POST /api/agent/metrics/execution-outcome` (body: runId, success, actualDurationSec, actualCostUsd, jobId, message, optional estimate fields for estimate vs actual).
+
+## Agentic handler selection (no fixed handler per stage; 2 or 3 stages by user choice)
+
+**No handler is fixed to source, intermediate, or target** — the user selects per stage. Examples:
+
+- **2-stage**: source → destination (e.g. source=oracle, target=gcs; or source=postgres, target=bigquery).
+- **3-stage**: source → intermediate → destination (e.g. source=oracle, intermediate=bigquery, target=gcs).
+
+Config supports: **intermediate** handlerType gcs (gcsPath) or bigquery (dataset, table); **target** type bigquery (dataset, table) or gcs (gcsPath). Validation is type-driven only.
+
+1. **Discover** – **GET /api/agent/pipeline-handlers** returns available handlers and current config mapping.
+
+2. **Decide** – User chooses source, optional intermediate, and target (any supported type per stage).
+
+3. **Execute** – **POST /api/agent/execute** body: optional **"source"**, **"intermediate"**, **"target"**. Omitted = use config. **PipelineHandlerResolver** resolves and validates by type; runner executes with resolved selection.
+
+**Tracking** – All user-provided details and resolved execution are logged so the user can find what was run later: **\[HANDLER-SELECTION]** (user provided), **\[EXECUTION-TRACKING]** (resolved execution and 2-stage vs 3-stage).

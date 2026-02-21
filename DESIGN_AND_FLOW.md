@@ -289,4 +289,4 @@ flowchart TB
 - **Agent design (segments, APIs)** – `src/main/java/com/di/streamnova/agent/README.md`
 - **Execution engine** – `EXECUTION_ENGINE_STATUS.md`
 - **Shard planner** – `SHARD_PLANNER_ARCHITECTURE.md`, `SHARD_PLANNER_PRODUCTION_READINESS.md`
-- **Pipeline config** – `src/main/resources/postgre_pipeline_config.yml` (comment on candidate override)
+- **Pipeline config** – event configs: `database_event_config.yml`, `gcs_event_config.yml`, `bq_event_config.yml`; or a single pipeline config file when not using event-configs-only (comment on candidate override)

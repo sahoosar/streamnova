@@ -1,0 +1,171 @@
+# ============================================================
+# StreamNova - Template YAML (DB → GCS) with Validation + Tracking
+# File name: pipeline-db-to-gcs-template.yml
+# ============================================================
+# Goal:
+# - Read from a DB source (Postgres/Oracle/etc.) and write to GCS
+# - Strong validations: (optional) source count + read vs write row-count match
+# - Full tracking: runId, source identity, stage metrics, file manifest, effective config
+# - Safe writes: atomic commit with tmp path + cleanup on failure
+#
+# Placeholders resolved at runtime:
+# {runId}
+# {sourceKey}                          (selected key in sources catalog)
+# {sourceType}                         (postgres/oracle)
+# {sourceSchema} {sourceTable}
+# {sourceQuery}                        (optional)
+# {incrementalColumn} {watermarkFrom} {watermarkTo} (optional)
+#
+# {outputBucket} {outputBasePath}
+# {fileFormat} {compression} {targetFileSizeMb} {writeMode} {traceEnabled}
+#
+# Parallelism placeholders (optional if Adaptive Planner sets them):
+# {workers} {shards} {maxDbConnections}
+# ============================================================
+
+pipeline:
+  execute:
+    mode: "2-stage"
+    sourceKey: "{sourceKey}"
+    destinationKey: "gcs_stage"
+
+  # -----------------------
+  # Stage configs
+  # -----------------------
+  config:
+
+    # =====================
+    # SOURCE (DB)
+    # =====================
+    sources:
+      # NOTE: this is a template entry; your runtime loader should either:
+      # - (A) merge this with a selected catalog source config (postgres/oracle), OR
+      # - (B) inject the final connection properties here directly.
+      db_source:
+        type: "{sourceType}"     # postgres / oracle
+
+        # Connection (prefer catalog refs in real deployments)
+        driver: "{driverClass}"
+        jdbcUrl: "{jdbcUrl}"
+        username: "{username}"
+        password: "{password}"
+
+        # What to read
+        schema: "{sourceSchema}"
+        table: "{sourceTable}"
+        query: "{sourceQuery}"   # optional; if empty, engine uses schema+table
+
+        # Read tuning
+        fetchSize: {fetchSize}
+        maximumPoolSize: {maxDbConnections}
+        minimumIdle: {minimumIdle}
+        connectionTimeoutMs: {connectionTimeoutMs}
+        idleTimeoutMs: {idleTimeoutMs}
+        maxLifetimeMs: {maxLifetimeMs}
+        enableProgressLogging: true
+
+        # Parallel read plan (can be set dynamically by Adaptive Planner)
+        workers: {workers}
+        shards: {shards}
+
+        # Incremental (optional)
+        extraction:
+          mode: "{extractionMode}"           # FULL / INCREMENTAL
+          incrementalColumn: "{incrementalColumn}"  # e.g. updated_at
+          watermarkFrom: "{watermarkFrom}"          # e.g. 2026-02-01T00:00:00Z
+          watermarkTo: "{watermarkTo}"              # e.g. 2026-02-15T00:00:00Z
+
+        # Profiling fallback if you can't sample
+        defaultBytesPerRow: {defaultBytesPerRowBytes}
+
+        # Optional: source row-count query for validation (avoid for huge tables if expensive)
+        sourceRowCount:
+          enabled: {enableSourceRowCount}
+          countQuery: "{sourceCountQuery}"   # e.g. SELECT COUNT(*) FROM schema.table
+
+    # =====================
+    # DESTINATION (GCS)
+    # =====================
+    destinations:
+      gcs_stage:
+        type: gcs
+
+        # Output location
+        bucket: "{outputBucket}"
+        basePath: "{outputBasePath}"
+
+        # Structured output folder for lineage
+        objectPathTemplate: "{sourceType}/{sourceSchema}/{sourceTable}/run_id={runId}/dt={yyyy-MM-dd}/"
+
+        # Output format
+        fileFormat: "{fileFormat}"       # PARQUET / AVRO / CSV / JSONL
+        compression: "{compression}"     # SNAPPY (parquet) / GZIP (csv/json)
+        targetFileSizeMb: {targetFileSizeMb}
+        maxRecordsPerFile: 0
+
+        # Write semantics
+        writeMode: "{writeMode}"         # APPEND / OVERWRITE (APPEND recommended)
+        commitStrategy: "ATOMIC"
+        tempPathSuffix: "_tmp"
+        cleanupTempOnFailure: true
+
+        # Output artifacts for tracking/replay
+        writeManifestFile: true
+        writeMetadataFile: true
+        manifestFileName: "_manifest.json"
+        metadataFileName: "_metadata.json"
+
+        # Optional trace columns for lineage/dedup
+        addTraceColumns:
+          enabled: {traceEnabled}
+          runIdColumn: "_streamnova_run_id"
+          shardIdColumn: "_streamnova_shard_id"
+          ingestionTsColumn: "_streamnova_ingestion_ts"
+
+  # -----------------------
+  # Tracking / Observability
+  # -----------------------
+  tracking:
+    runIdStrategy: "UUID"
+    storeRunMetricsToDb: true
+
+    runMetricsTable: "streamnova.load_run_metrics"
+    stageMetricsTable: "streamnova.load_stage_metrics"
+    fileManifestTable: "streamnova.load_file_manifest"
+
+    includeEffectiveConfig: true
+
+    # Persist source identifiers for easy correlation queries
+    includeSourceIdentity: true   # (schema/table/query hash/sourceKey)
+    includePlannerDecision: true  # store chosen machine/workers/shards if planner used
+
+    labels:
+      product: "streamnova"
+      pipeline: "db_to_gcs"
+
+  # -----------------------
+  # Validation
+  # -----------------------
+  validation:
+    # Basic: if extraction produced no rows/files, fail fast
+    failIfEmptyOutput: true
+
+    # Main integrity check: rows read == rows written to GCS
+    compareReadVsWriteRowCount: true
+    failOnMismatch: true
+    tolerancePct: 0.0
+
+    # Optional: source count validation (can be expensive)
+    validateSourceRowCount: {enableSourceRowCount}
+    failIfSourceCountMismatch: false   # recommended false for incremental; true for full if feasible
+
+  # -----------------------
+  # Runtime guardrails (recommended)
+  # -----------------------
+  guardrails:
+    allowedFileFormats:
+      - "PARQUET"
+      - "AVRO"
+      - "CSV"
+      - "JSONL"
+    enforceOutputBasePath: true

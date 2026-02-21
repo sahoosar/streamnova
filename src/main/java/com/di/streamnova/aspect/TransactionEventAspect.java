@@ -9,6 +9,8 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
@@ -43,6 +45,7 @@ import java.util.UUID;
 @Slf4j
 @Aspect
 @Component
+@Order(Ordered.LOWEST_PRECEDENCE)
 public class TransactionEventAspect {
 
     private final String applicationId;
@@ -64,6 +67,9 @@ public class TransactionEventAspect {
     public Object logTransaction(ProceedingJoinPoint joinPoint) throws Throwable {
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Method method = signature.getMethod();
+        String targetClass = joinPoint.getTarget().getClass().getSimpleName();
+        String methodName = method.getName();
+        log.info("[ASPECT] @LogTransaction intercepted: {}.{}", targetClass, methodName);
         LogTransaction annotation = method.getAnnotation(LogTransaction.class);
         
         String eventType = annotation.eventType();

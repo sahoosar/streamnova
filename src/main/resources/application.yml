@@ -5,13 +5,8 @@ spring:
   application:
     name: StreamNova  # Used in logs and transaction events
 
-  # Pipeline profile (choose DB type and environment)
-  # Single DB: postgres (default) | oracle | postgres-sit | oracle-uat | etc.
-  # Both DBs: postgres, oracle (invokes application-postgres + application-oracle)
-  # See MULTI_PROFILE_HANDLING.md for multiple profiles.
-  profiles:
-    active: postgres
-
+  # Active profiles: set via --spring.profiles.active=postgres or env SPRING_PROFILES_ACTIVE=postgres,sit
+  # (Spring Boot 3.5+ does not support spring.profiles in config; use CLI or env instead.)
   devtools:
     add-properties: false  # Disable property-defaults log message (optional)
 
@@ -54,6 +49,9 @@ logging:
     com.di.streamnova: INFO
     DLQ: INFO
     VALID: INFO
+    # Optional: uncomment to see Spring's request mapping resolution (noisier)
+    # org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping: TRACE
+    # org.springframework.web.servlet.DispatcherServlet: DEBUG
 
 # ============================================================================
 # StreamNova - Guardrails
@@ -61,6 +59,22 @@ logging:
 # Allowed machine types at recommend/execute. Comma-separated; exact or family prefix (e.g. n2 = n2-*).
 # Empty = no restriction.
 streamnova:
+  # Request logging: log method, URI, and body to console (helps debug POST vs GET). Set enabled: false to disable.
+  request-logging:
+    enabled: true
+    max-body-length: 2048
+
+  # Project-level AspectJ transaction tracking: [TX-START] / [TX-END] / [TX-FAIL], metrics, and txId in MDC.
+  # track-controllers: every REST controller method. track-services: runner + agent/config services.
+  # metrics-enabled: publish streamnova.tx.duration and streamnova.tx.count to Micrometer (Prometheus).
+  # structured-logging: log as key=value (event=TX-START layer=... ) for log aggregation (ELK, Splunk).
+  aspect:
+    track-controllers: true
+    track-services: true
+    metrics-enabled: true
+    metric-name-prefix: streamnova.tx
+    structured-logging: true
+
   guardrails:
     allowed-machine-types: n2d-standard-2,n2-standard-2,n2d-standard-4,c3-standard-4,n2-standard-4,n2d-standard-8,c3-standard-8,n2-standard-8,n2d-standard-16,n2-standard-16
     # Optional: uncomment and set to enable default SLA when client omits them
@@ -151,5 +165,44 @@ streamnova:
   # Statistics / pipeline config
   # --------------------------------------------------------------------------
   statistics:
-    # Source types for table stats and startup datasources. Use spring.profiles.active=postgres,oracle when both.
-    supported-source-types: postgres
+    # Input sources to support. Matches spring.profiles (postgres, oracle, or both).
+    # When both: postgres and oracle pipeline configs are loaded and datasources created for each.
+    #supported-source-types: postgres,oracle
+
+  # --------------------------------------------------------------------------
+  # Pipeline config: event configs only (database_event_config.yml, gcs_event_config.yml, bq_event_config.yml)
+  # --------------------------------------------------------------------------
+  pipeline:
+    # Use event configs per user choice (2-stage or 3-stage). Config loaded from database_event_config.yml (all DBs), gcs_event_config.yml, bq_event_config.yml.
+    use-event-configs-only: true
+    # Listener config (entrypoint for 2-stage / 3-stage). Override per env in application-{profile}.yml (e.g. pipeline_listener_config-sit.yml).
+    listener-config-file: classpath:pipeline_listener_config.yml
+    event-config-files:
+      # Generic database config: one file for all JDBC sources (postgres, oracle, mysql, etc.)
+      postgres: classpath:database_event_config.yml
+      oracle: classpath:database_event_config.yml
+      mysql: classpath:database_event_config.yml
+      gcs: classpath:gcs_event_config.yml
+      bigquery: classpath:bq_event_config.yml
+      bq: classpath:bq_event_config.yml   # alias for bigquery
+    # Default values for template context when event config (e.g. gcs_event_config destinations.gcs) does not set them.
+    template-defaults:
+      file-format: PARQUET    # PARQUET | AVRO | CSV | JSONL
+      compression: SNAPPY
+      # Target size per output file (MB). Optional: actual file sizes may vary. Use 0 to omit (runner default).
+      target-file-size-mb: 64
+      write-mode: APPEND      # APPEND | OVERWRITE
+      trace-enabled: true
+    # Template paths per workflow (source/target). Used for template-based execution and template-details endpoint.
+    templates:
+      db-to-gcs: classpath:pipeline-db-to-gcs-template.yml
+      db-to-gcs-to-bq: classpath:pipeline-db-to-gcs-to-bq-template.yml
+      gcs-to-bq: classpath:pipeline-gcs-to-bq-template.yml
+      gcs-to-gcs: classpath:pipeline-gcs-to-gcs-template.yml
+      warehouse-to-gcs-to-bq: classpath:pipeline-warehouse-to-gcs-to-bq-template.yml
+      bq-to-gcs: classpath:pipeline-bq-to-gcs-template.yml
+    # Restrict execution to a single source handler when multiple are configured (postgres, oracle, mysql, gcs).
+    # Set to the allowed type (e.g. postgres, oracle, or mysql); execute requests with a different source will be rejected.
+    # Leave empty for no restriction (any registered handler allowed).
+    # Example: expected-handler: postgres
+    expected-handler:

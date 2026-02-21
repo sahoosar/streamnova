@@ -1,0 +1,200 @@
+2026-02-14 09:48:24.953 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config loaded from file (password from env vars / file, re-read on each request): file:src/main/resources/oracle_pipeline_config.yml
+2026-02-14 09:48:24.954 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [STARTUP] Pipeline config file: loaded successfully from file:src/main/resources/oracle_pipeline_config.yml
+2026-02-14 09:48:24.955 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:48:24.956 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:48:24.956 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:48:24.957 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:48:24.958 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:48:24.958 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] DATASOURCE / CONNECTION POOL  |  Creating datasources sequentially (2 connection(s)): [oracle, postgres]
+2026-02-14 09:48:24.958 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:48:24.958 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 1/2: creating connection pool for 'oracle'
+2026-02-14 09:48:24.958 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:48:24.959 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:48:24.959 INFO  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating new HikariCP DataSource for connection: jdbc:oracle:thin:@localhost:1521:ORCL (user: saroj)
+2026-02-14 09:48:24.959 WARN  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Validation | Unable to connect for availability check | url=jdbc:oracle:thin:@localhost:1521:ORCL | user=saroj | error=oracle.jdbc.OracleDriver | Using config maxPoolSize=32 | Verify: JDBC URL, credentials, network, DB is up
+java.lang.ClassNotFoundException: oracle.jdbc.OracleDriver
+	at java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:641)
+	at java.base/jdk.internal.loader.ClassLoaders$AppClassLoader.loadClass(ClassLoaders.java:188)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:520)
+	at java.base/java.lang.Class.forName0(Native Method)
+	at java.base/java.lang.Class.forName(Class.java:467)
+	at org.springframework.boot.devtools.restart.classloader.RestartClassLoader.loadClass(RestartClassLoader.java:121)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:520)
+	at java.base/java.lang.Class.forName0(Native Method)
+	at java.base/java.lang.Class.forName(Class.java:375)
+	at com.di.streamnova.util.HikariDataSource.loadDriver(HikariDataSource.java:351)
+	at com.di.streamnova.util.HikariDataSource.validateAndResolvePoolSize(HikariDataSource.java:321)
+	at com.di.streamnova.util.HikariDataSource.lambda$getOrInit$0(HikariDataSource.java:73)
+	at java.base/java.util.concurrent.ConcurrentHashMap.computeIfAbsent(ConcurrentHashMap.java:1708)
+	at com.di.streamnova.util.HikariDataSource.getOrInit(HikariDataSource.java:67)
+	at com.di.streamnova.config.DataSourceStartupInitializer.initPoolFor(DataSourceStartupInitializer.java:90)
+	at com.di.streamnova.config.DataSourceStartupInitializer.run(DataSourceStartupInitializer.java:58)
+	at org.springframework.boot.SpringApplication.lambda$callRunner$4(SpringApplication.java:784)
+	at org.springframework.util.function.ThrowingConsumer$1.acceptWithException(ThrowingConsumer.java:82)
+	at org.springframework.util.function.ThrowingConsumer.accept(ThrowingConsumer.java:60)
+	at org.springframework.util.function.ThrowingConsumer$1.accept(ThrowingConsumer.java:86)
+	at org.springframework.boot.SpringApplication.callRunner(SpringApplication.java:796)
+	at org.springframework.boot.SpringApplication.callRunner(SpringApplication.java:784)
+	at org.springframework.boot.SpringApplication.lambda$callRunners$3(SpringApplication.java:772)
+	at java.base/java.util.stream.ForEachOps$ForEachOp$OfRef.accept(ForEachOps.java:183)
+	at java.base/java.util.stream.SortedOps$SizedRefSortingSink.end(SortedOps.java:357)
+	at java.base/java.util.stream.AbstractPipeline.copyInto(AbstractPipeline.java:510)
+	at java.base/java.util.stream.AbstractPipeline.wrapAndCopyInto(AbstractPipeline.java:499)
+	at java.base/java.util.stream.ForEachOps$ForEachOp.evaluateSequential(ForEachOps.java:150)
+	at java.base/java.util.stream.ForEachOps$ForEachOp$OfRef.evaluateSequential(ForEachOps.java:173)
+	at java.base/java.util.stream.AbstractPipeline.evaluate(AbstractPipeline.java:234)
+	at java.base/java.util.stream.ReferencePipeline.forEach(ReferencePipeline.java:596)
+	at org.springframework.boot.SpringApplication.callRunners(SpringApplication.java:772)
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:325)
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1361)
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1350)
+	at com.di.streamnova.StreamNovaApplication.main(StreamNovaApplication.java:33)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+	at org.springframework.boot.devtools.restart.RestartLauncher.run(RestartLauncher.java:50)
+2026-02-14 09:48:24.960 ERROR [restartedMain] [app=StreamNova] com.zaxxer.hikari.HikariConfig - Failed to load driver class oracle.jdbc.OracleDriver from HikariConfig class classloader jdk.internal.loader.ClassLoaders$AppClassLoader@22d8cfe0
+2026-02-14 09:48:24.960 ERROR [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Failed to create pool for connection 'oracle': Failed to load driver class oracle.jdbc.OracleDriver in either of HikariConfig class loader or Thread context classloader. Check oracle_pipeline_config.yml pipeline.config.connections.oracle (type, driver, jdbcUrl, username, password, maximumPoolSize, idleTimeout, connectionTimeout, maxLifetime)
+2026-02-14 09:48:24.960 WARN  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 1/2: connection 'oracle' failed (see error above)
+2026-02-14 09:48:24.960 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 2/2: creating connection pool for 'postgres'
+2026-02-14 09:48:24.961 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:48:24.961 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:48:24.961 INFO  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating new HikariCP DataSource for connection: jdbc:postgresql://localhost:5432/marketdb (user: saroj)
+2026-02-14 09:48:25.002 INFO  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating | connectionKey=jdbc:postgresql://localhost:5432/marketdb saroj *** | config maxPoolSize=8 | effective maxPoolSize=8, minIdle=2
+2026-02-14 09:48:25.293 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] Calibration | pool=HikariPool-1-localhost_marketdb_saroj | requested maxPoolSize=8 | actualMaxPoolSize=8 | status=OK
+2026-02-14 09:48:25.293 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] after calibration (final) | pool=HikariPool-1-localhost_marketdb_saroj | maxSize=8, minIdle=2 | active=0, idle=8, total=8, waiting=0
+2026-02-14 09:48:25.293 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:48:25.293 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 2/2: connection 'postgres' created successfully
+2026-02-14 09:48:25.293 ERROR [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource creation finished with 1 failure(s):
+2026-02-14 09:48:25.293 ERROR [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP]   - 'oracle': Failed to load driver class oracle.jdbc.OracleDriver in either of HikariConfig class loader or Thread context classloader. Check oracle_pipeline_config.yml pipeline.config.connections.oracle
+2026-02-14 09:48:25.293 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource summary: 1 ready ([postgres]), 1 failed ([oracle])
+2026-02-14 09:48:25.294 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:48:25.938 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:48:25.939 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.526 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config loaded from file (password from env vars / file, re-read on each request): file:src/main/resources/oracle_pipeline_config.yml
+2026-02-14 09:54:14.527 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [STARTUP] Pipeline config file: loaded successfully from file:src/main/resources/oracle_pipeline_config.yml
+2026-02-14 09:54:14.528 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.529 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.529 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.530 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.530 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:54:14.530 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] DATASOURCE / CONNECTION POOL  |  Creating datasources sequentially (2 connection(s)): [oracle, postgres]
+2026-02-14 09:54:14.530 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:54:14.530 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 1/2: creating connection pool for 'oracle'
+2026-02-14 09:54:14.531 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.532 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:54:14.532 INFO  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating new HikariCP DataSource for connection: jdbc:oracle:thin:@localhost:1521:ORCL (user: saroj)
+2026-02-14 09:54:14.532 WARN  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Validation | Unable to connect for availability check | url=jdbc:oracle:thin:@localhost:1521:ORCL | user=saroj | error=oracle.jdbc.OracleDriver | Using config maxPoolSize=32 | Verify: JDBC URL, credentials, network, DB is up
+java.lang.ClassNotFoundException: oracle.jdbc.OracleDriver
+	at java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:641)
+	at java.base/jdk.internal.loader.ClassLoaders$AppClassLoader.loadClass(ClassLoaders.java:188)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:520)
+	at java.base/java.lang.Class.forName0(Native Method)
+	at java.base/java.lang.Class.forName(Class.java:467)
+	at org.springframework.boot.devtools.restart.classloader.RestartClassLoader.loadClass(RestartClassLoader.java:121)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:520)
+	at java.base/java.lang.Class.forName0(Native Method)
+	at java.base/java.lang.Class.forName(Class.java:375)
+	at com.di.streamnova.util.HikariDataSource.loadDriver(HikariDataSource.java:351)
+	at com.di.streamnova.util.HikariDataSource.validateAndResolvePoolSize(HikariDataSource.java:321)
+	at com.di.streamnova.util.HikariDataSource.lambda$getOrInit$0(HikariDataSource.java:73)
+	at java.base/java.util.concurrent.ConcurrentHashMap.computeIfAbsent(ConcurrentHashMap.java:1708)
+	at com.di.streamnova.util.HikariDataSource.getOrInit(HikariDataSource.java:67)
+	at com.di.streamnova.config.DataSourceStartupInitializer.initPoolFor(DataSourceStartupInitializer.java:110)
+	at com.di.streamnova.config.DataSourceStartupInitializer.run(DataSourceStartupInitializer.java:78)
+	at org.springframework.boot.SpringApplication.lambda$callRunner$4(SpringApplication.java:784)
+	at org.springframework.util.function.ThrowingConsumer$1.acceptWithException(ThrowingConsumer.java:82)
+	at org.springframework.util.function.ThrowingConsumer.accept(ThrowingConsumer.java:60)
+	at org.springframework.util.function.ThrowingConsumer$1.accept(ThrowingConsumer.java:86)
+	at org.springframework.boot.SpringApplication.callRunner(SpringApplication.java:796)
+	at org.springframework.boot.SpringApplication.callRunner(SpringApplication.java:784)
+	at org.springframework.boot.SpringApplication.lambda$callRunners$3(SpringApplication.java:772)
+	at java.base/java.util.stream.ForEachOps$ForEachOp$OfRef.accept(ForEachOps.java:183)
+	at java.base/java.util.stream.SortedOps$SizedRefSortingSink.end(SortedOps.java:357)
+	at java.base/java.util.stream.AbstractPipeline.copyInto(AbstractPipeline.java:510)
+	at java.base/java.util.stream.AbstractPipeline.wrapAndCopyInto(AbstractPipeline.java:499)
+	at java.base/java.util.stream.ForEachOps$ForEachOp.evaluateSequential(ForEachOps.java:150)
+	at java.base/java.util.stream.ForEachOps$ForEachOp$OfRef.evaluateSequential(ForEachOps.java:173)
+	at java.base/java.util.stream.AbstractPipeline.evaluate(AbstractPipeline.java:234)
+	at java.base/java.util.stream.ReferencePipeline.forEach(ReferencePipeline.java:596)
+	at org.springframework.boot.SpringApplication.callRunners(SpringApplication.java:772)
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:325)
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1361)
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1350)
+	at com.di.streamnova.StreamNovaApplication.main(StreamNovaApplication.java:33)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+	at org.springframework.boot.devtools.restart.RestartLauncher.run(RestartLauncher.java:50)
+2026-02-14 09:54:14.533 ERROR [restartedMain] [app=StreamNova] com.zaxxer.hikari.HikariConfig - Failed to load driver class oracle.jdbc.OracleDriver from HikariConfig class classloader jdk.internal.loader.ClassLoaders$AppClassLoader@22d8cfe0
+2026-02-14 09:54:14.533 ERROR [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Failed to create pool for connection 'oracle': Failed to load driver class oracle.jdbc.OracleDriver in either of HikariConfig class loader or Thread context classloader. Check oracle_pipeline_config.yml pipeline.config.connections.oracle (type, driver, jdbcUrl, username, password, maximumPoolSize, idleTimeout, connectionTimeout, maxLifetime)
+2026-02-14 09:54:14.533 WARN  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 1/2: connection 'oracle' failed (see error above)
+2026-02-14 09:54:14.533 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 2/2: creating connection pool for 'postgres'
+2026-02-14 09:54:14.536 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.536 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:54:14.537 INFO  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating new HikariCP DataSource for connection: jdbc:postgresql://localhost:5432/marketdb (user: saroj)
+2026-02-14 09:54:14.578 INFO  [restartedMain] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating | connectionKey=jdbc:postgresql://localhost:5432/marketdb saroj *** | config maxPoolSize=8 | effective maxPoolSize=8, minIdle=2
+2026-02-14 09:54:14.866 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] Calibration | pool=HikariPool-1-localhost_marketdb_saroj | requested maxPoolSize=8 | actualMaxPoolSize=8 | status=OK
+2026-02-14 09:54:14.866 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] after calibration (final) | pool=HikariPool-1-localhost_marketdb_saroj | maxSize=8, minIdle=2 | active=0, idle=8, total=8, waiting=0
+2026-02-14 09:54:14.866 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:54:14.866 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource 2/2: connection 'postgres' created successfully
+2026-02-14 09:54:14.866 ERROR [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource creation finished with 1 failure(s):
+2026-02-14 09:54:14.866 ERROR [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP]   - 'oracle': Failed to load driver class oracle.jdbc.OracleDriver in either of HikariConfig class loader or Thread context classloader. Check oracle_pipeline_config.yml pipeline.config.connections.oracle
+2026-02-14 09:54:14.867 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] Datasource summary: 1 ready ([postgres]), 1 failed ([oracle])
+2026-02-14 09:54:14.867 INFO  [restartedMain] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 09:54:14.873 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:14.874 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:15.525 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 09:54:15.525 INFO  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - [CONFIG] Pipeline config: postgres connection loaded from postgre_pipeline_config.yml
+2026-02-14 16:13:05.856 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:13:05.857 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. file:src/main/resources/postgre_pipeline_config.yml). All config is loaded from file only.
+2026-02-14 16:20:50.790 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:20:50.791 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. file:src/main/resources/postgre_pipeline_config.yml). All config is loaded from file only.
+2026-02-14 16:25:01.923 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:25:01.923 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. file:src/main/resources/postgre_pipeline_config.yml). All config is loaded from file only.
+2026-02-14 16:25:05.575 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:25:05.575 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. file:src/main/resources/postgre_pipeline_config.yml). All config is loaded from file only.
+2026-02-14 16:27:29.696 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:27:29.696 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 16:40:07.097 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:40:07.097 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 16:44:24.774 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:44:24.775 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 16:53:05.127 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:53:05.127 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 16:56:35.443 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 16:56:35.443 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 17:03:17.947 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 17:03:17.947 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 17:12:48.311 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 17:12:48.311 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 17:17:20.077 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 17:17:20.077 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 17:19:26.973 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 17:19:26.973 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 17:23:22.610 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 17:23:22.610 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 17:25:50.770 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 17:25:50.770 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 17:31:17.338 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 17:31:17.339 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 18:17:14.381 INFO  [http-nio-8080-exec-4] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 18:17:14.381 INFO  [http-nio-8080-exec-4] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating new HikariCP DataSource for connection: jdbc:postgresql://localhost:5432/marketdb (user: saroj)
+2026-02-14 18:17:14.434 INFO  [http-nio-8080-exec-4] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating | connectionKey=jdbc:postgresql://localhost:5432/marketdb saroj *** | config maxPoolSize=8 | effective maxPoolSize=8, minIdle=2
+2026-02-14 18:17:14.734 INFO  [http-nio-8080-exec-4] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] Calibration | pool=HikariPool-1-localhost_marketdb_saroj | requested maxPoolSize=8 | actualMaxPoolSize=8 | status=OK
+2026-02-14 18:17:14.735 INFO  [http-nio-8080-exec-4] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] after calibration (final) | pool=HikariPool-1-localhost_marketdb_saroj | maxSize=8, minIdle=2 | active=0, idle=8, total=8, waiting=0
+2026-02-14 18:17:14.735 INFO  [http-nio-8080-exec-4] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 18:43:55.683 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 18:43:55.683 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 18:44:03.971 INFO  [http-nio-8080-exec-1] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 18:44:03.971 INFO  [http-nio-8080-exec-1] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating new HikariCP DataSource for connection: jdbc:postgresql://localhost:5432/marketdb (user: saroj)
+2026-02-14 18:44:04.017 INFO  [http-nio-8080-exec-1] [app=StreamNova] c.d.streamnova.util.HikariDataSource - [POOL] Creating | connectionKey=jdbc:postgresql://localhost:5432/marketdb saroj *** | config maxPoolSize=8 | effective maxPoolSize=8, minIdle=2
+2026-02-14 18:44:04.318 INFO  [http-nio-8080-exec-1] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] Calibration | pool=HikariPool-1-localhost_marketdb_saroj | requested maxPoolSize=8 | actualMaxPoolSize=8 | status=OK
+2026-02-14 18:44:04.319 INFO  [http-nio-8080-exec-1] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - [POOL] after calibration (final) | pool=HikariPool-1-localhost_marketdb_saroj | maxSize=8, minIdle=2 | active=0, idle=8, total=8, waiting=0
+2026-02-14 18:44:04.319 INFO  [http-nio-8080-exec-1] [app=StreamNova] c.d.s.util.ConnectionPoolLogger - ================================================================================
+2026-02-14 19:34:38.362 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 19:34:38.362 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.
+2026-02-14 19:36:04.252 INFO  [restartedMain] [app=StreamNova] c.d.s.c.DataSourceStartupInitializer - [DS-STARTUP] use-event-configs-only: true — skipping startup datasource creation. Call POST /api/agent/pipeline-listener/create-datasource (or GET datasource-details) with source/target to create pools, then run pipeline.
+2026-02-14 19:36:04.252 WARN  [restartedMain] [app=StreamNova] c.d.s.config.PipelineConfigService - Pipeline config-file is not set. Set streamnova.pipeline.config-file (e.g. classpath:pipeline_config.yml). All config is loaded from file only when not using event-configs-only.

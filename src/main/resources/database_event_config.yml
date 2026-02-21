@@ -1,0 +1,64 @@
+# Generic database event config: source definitions for all JDBC databases.
+# Used by streamnova.pipeline.event-config-files for postgres, oracle, mysql, etc.
+# Each source key (postgres, oracle, mysql) maps to pipeline.config.sources.<key>.
+# Override connection details per environment via application-{profile}.yml or env vars.
+#
+# Source: pipeline.config.sources.<key>  (postgres | oracle | mysql | ...)
+pipeline:
+  config:
+    sources:
+      postgres:
+        type: postgres
+        driver: org.postgresql.Driver
+        jdbcUrl: jdbc:postgresql://localhost:5432/marketdb
+        username: saroj
+        password: admin
+        fetchSize: 5000
+        fetchFactor: 1.0
+        maximumPoolSize: 8
+        fallbackPoolSize: 8
+        minimumIdle: 2
+        idleTimeout: 300000
+        connectionTimeout: 300000
+        maxLifetime: 1800000
+        enableProgressLogging: true
+        shards: 2
+        workers: 1
+        defaultBytesPerRow: "200KB"
+
+      oracle:
+        type: oracle
+        driver: oracle.jdbc.OracleDriver
+        jdbcUrl: jdbc:oracle:thin:@localhost:1521:ORCL
+        username: ${ORACLE_USERNAME:oracle_user}
+        password: ${ORACLE_PASSWORD:}
+        fetchSize: 1000
+        maximumPoolSize: 8
+        fallbackPoolSize: 8
+        minimumIdle: 2
+        idleTimeout: 300000
+        connectionTimeout: 300000
+        maxLifetime: 1800000
+        enableProgressLogging: true
+        shards: 2
+        workers: 1
+        defaultBytesPerRow: "200KB"
+
+      mysql:
+        type: mysql
+        driver: com.mysql.cj.jdbc.Driver
+        jdbcUrl: jdbc:mysql://localhost:3306/marketdb?useSSL=false&allowPublicKeyRetrieval=true
+        username: ${MYSQL_USERNAME:mysql_user}
+        password: ${MYSQL_PASSWORD:}
+        fetchSize: 5000
+        fetchFactor: 1.0
+        maximumPoolSize: 8
+        fallbackPoolSize: 8
+        minimumIdle: 2
+        idleTimeout: 300000
+        connectionTimeout: 300000
+        maxLifetime: 1800000
+        enableProgressLogging: true
+        shards: 2
+        workers: 1
+        defaultBytesPerRow: "200KB"

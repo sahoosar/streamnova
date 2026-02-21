@@ -1,0 +1,173 @@
+# ============================================================
+# StreamNova - Unified Template (BigQuery → GCS)
+# Supports:
+# - Non-partitioned table export
+# - Partitioned export (ingestion-time OR column partition)
+# - Single partition or range
+#
+# File name suggestion: pipeline-bq-to-gcs-unified-template.yml
+# ============================================================
+# Placeholders resolved at runtime:
+# {runId}
+# {bqProject} {bqDataset} {bqTable} {bqLocation}
+# {bqQuery} (optional; if provided, overrides table)
+#
+# Partition placeholders (used only if partition.enabled=true):
+# {partitionType}        # NONE / INGESTION_TIME / COLUMN
+# {partitionColumn}      # required if COLUMN
+# {partitionValue}       # single partition date (YYYY-MM-DD) for SINGLE mode
+# {partitionFrom} {partitionTo}  # range (YYYY-MM-DD), end exclusive recommended
+# {partitionMode}        # SINGLE / RANGE
+#
+# GCS placeholders:
+# {outputBucket} {outputBasePath}
+# {fileFormat} {compression} {targetFileSizeMb} {writeMode}
+# ============================================================
+
+pipeline:
+  execute:
+    mode: "2-stage"
+    sourceKey: "bq_source"
+    destinationKey: "gcs_stage"
+
+  config:
+    # =====================
+    # SOURCE (BigQuery)
+    # =====================
+    sources:
+      bq_source:
+        type: bigquery
+        project: "{bqProject}"
+        dataset: "{bqDataset}"
+        table: "{bqTable}"
+        location: "{bqLocation}"
+
+        # Optional: if provided, this query is used instead of table/partition logic
+        query: "{bqQuery}"
+
+        # Partition control (switchable)
+        partition:
+          enabled: false
+          type: "{partitionType}"          # NONE / INGESTION_TIME / COLUMN
+          mode: "{partitionMode}"          # SINGLE / RANGE
+          column: "{partitionColumn}"      # required if type=COLUMN
+          value: "{partitionValue}"        # required for SINGLE
+          from: "{partitionFrom}"          # required for RANGE
+          to: "{partitionTo}"              # required for RANGE (exclusive end)
+
+        # Query templates (engine chooses one based on partition settings)
+        queryTemplate:
+          nonPartitionedTable: >
+            SELECT * FROM `{bqProject}.{bqDataset}.{bqTable}`
+
+          ingestionSingle: >
+            SELECT *
+            FROM `{bqProject}.{bqDataset}.{bqTable}`
+            WHERE _PARTITIONDATE = '{partitionValue}'
+
+          ingestionRange: >
+            SELECT *
+            FROM `{bqProject}.{bqDataset}.{bqTable}`
+            WHERE _PARTITIONDATE >= '{partitionFrom}'
+              AND _PARTITIONDATE <  '{partitionTo}'
+
+          columnSingle: >
+            SELECT *
+            FROM `{bqProject}.{bqDataset}.{bqTable}`
+            WHERE {partitionColumn} >= TIMESTAMP('{partitionValue}T00:00:00Z')
+              AND {partitionColumn} <  TIMESTAMP(DATE_ADD(DATE('{partitionValue}'), INTERVAL 1 DAY))
+
+          columnRange: >
+            SELECT *
+            FROM `{bqProject}.{bqDataset}.{bqTable}`
+            WHERE {partitionColumn} >= TIMESTAMP('{partitionFrom}T00:00:00Z')
+              AND {partitionColumn} <  TIMESTAMP('{partitionTo}T00:00:00Z')
+
+        # Row-count for validation (optional)
+        rowCount:
+          enabled: true
+          method: "JOB_STATS"               # JOB_STATS / COUNT_QUERY
+          countQueryTemplate:
+            nonPartitioned: "SELECT COUNT(*) FROM `{bqProject}.{bqDataset}.{bqTable}`"
+            ingestionSingle: >
+              SELECT COUNT(*)
+              FROM `{bqProject}.{bqDataset}.{bqTable}`
+              WHERE _PARTITIONDATE = '{partitionValue}'
+            ingestionRange: >
+              SELECT COUNT(*)
+              FROM `{bqProject}.{bqDataset}.{bqTable}`
+              WHERE _PARTITIONDATE >= '{partitionFrom}'
+                AND _PARTITIONDATE <  '{partitionTo}'
+            columnSingle: >
+              SELECT COUNT(*)
+              FROM `{bqProject}.{bqDataset}.{bqTable}`
+              WHERE {partitionColumn} >= TIMESTAMP('{partitionValue}T00:00:00Z')
+                AND {partitionColumn} <  TIMESTAMP(DATE_ADD(DATE('{partitionValue}'), INTERVAL 1 DAY))
+            columnRange: >
+              SELECT COUNT(*)
+              FROM `{bqProject}.{bqDataset}.{bqTable}`
+              WHERE {partitionColumn} >= TIMESTAMP('{partitionFrom}T00:00:00Z')
+                AND {partitionColumn} <  TIMESTAMP('{partitionTo}T00:00:00Z')
+
+    # =====================
+    # DESTINATION (GCS)
+    # =====================
+    destinations:
+      gcs_stage:
+        type: gcs
+        bucket: "{outputBucket}"
+        basePath: "{outputBasePath}"
+
+        # Output path adapts:
+        # - if partition.enabled=false → partition=all
+        # - if partition.enabled=true & mode=SINGLE → partition={partitionValue}
+        # - if partition.enabled=true & mode=RANGE → partition={partitionFrom}_{partitionTo}
+        objectPathTemplate: >
+          bq/{bqDataset}/{bqTable}/partition={partitionLabel}/run_id={runId}/dt={yyyy-MM-dd}/
+
+        fileFormat: "{fileFormat}"          # PARQUET recommended
+        compression: "{compression}"        # SNAPPY for parquet
+        targetFileSizeMb: {targetFileSizeMb}
+        writeMode: "{writeMode}"            # APPEND / OVERWRITE
+
+        commitStrategy: "ATOMIC"
+        tempPathSuffix: "_tmp"
+        cleanupTempOnFailure: true
+
+        writeManifestFile: true
+        writeMetadataFile: true
+        manifestFileName: "_manifest.json"
+        metadataFileName: "_metadata.json"
+
+  # -----------------------
+  # Tracking
+  # -----------------------
+  tracking:
+    runIdStrategy: "UUID"
+    storeRunMetricsToDb: true
+    runMetricsTable: "streamnova.load_run_metrics"
+    stageMetricsTable: "streamnova.load_stage_metrics"
+    fileManifestTable: "streamnova.load_file_manifest"
+    includeEffectiveConfig: true
+    includeSourceIdentity: true
+    labels:
+      product: "streamnova"
+      pipeline: "bq_to_gcs_unified"
+
+  # -----------------------
+  # Validation
+  # -----------------------
+  validation:
+    failIfEmptyOutput: true
+    compareReadVsWriteRowCount: true
+    failOnMismatch: true
+    tolerancePct: 0.0
+    validateOutputManifestFileList: true
+    validateOutputManifestRowCounts: true
+
+  # -----------------------
+  # Guardrails
+  # -----------------------
+  guardrails:
+    allowedFileFormats: ["PARQUET", "AVRO", "CSV", "JSONL"]
+    enforceOutputBasePath: true

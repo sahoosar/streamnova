@@ -13,12 +13,18 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
  * REST API to execute a load with a given candidate (e.g. the recommended one from GET /api/agent/recommend).
  * Async: submits the job and returns immediately; shards are reserved until the run completes.
  * Run completion must be reported via POST /api/agent/metrics/execution-outcome (same runId); shards are released there.
+ * <p>
+ * When using event configs: pass the <b>same</b> source, target (and intermediate for 3-stage) used for
+ * GET /api/agent/pipeline-listener/actions-mapping and POST /api/agent/pipeline-listener/create-datasource,
+ * so the pipeline receives the same merged event config and triggers SOURCE_READ, INTERMEDIATE_WRITE, TARGET_WRITE.
  */
 @Slf4j
 @RestController
@@ -73,8 +79,13 @@ public class ExecutionController {
                     .body(body);
         }
 
+        com.di.streamnova.config.HandlerOverrides overrides = com.di.streamnova.config.HandlerOverrides.builder()
+                .source(trimToNull(request.getSource()))
+                .intermediate(trimToNull(request.getIntermediate()))
+                .target(trimToNull(request.getTarget()))
+                .build();
         try {
-            ExecutionResult result = executionEngine.execute(candidate);
+            ExecutionResult result = executionEngine.execute(candidate, overrides, request);
             if (!result.isSuccess()) {
                 shardAvailabilityService.release(runId);
             }
@@ -83,8 +94,23 @@ public class ExecutionController {
             log.error("[EXECUTION] Execute failed for runId={}: {}", runId, e.getMessage(), e);
             shardAvailabilityService.release(runId);
             String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            Map<String, String> selection = new LinkedHashMap<>();
+            selection.put("source", trimToNull(request.getSource()));
+            selection.put("intermediate", trimToNull(request.getIntermediate()));
+            selection.put("target", trimToNull(request.getTarget()));
+            int stages = (request.getIntermediate() != null && !request.getIntermediate().isBlank()) ? 3 : 2;
             return ResponseEntity.status(500)
-                    .body(ExecutionResult.builder().success(false).jobId(null).message("Execution failed: " + message).build());
+                    .body(ExecutionResult.builder()
+                            .success(false)
+                            .jobId(null)
+                            .message("Execution failed: " + message)
+                            .stages(stages)
+                            .selection(selection)
+                            .build());
         }
+    }
+
+    private static String trimToNull(String s) {
+        return s != null && !s.isBlank() ? s.trim() : null;
     }
 }

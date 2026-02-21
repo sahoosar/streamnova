@@ -1,0 +1,10 @@
+# ============================================================================
+# Profile: oracle (Oracle pipeline – generic / local)
+# ============================================================================
+# Activate: --spring.profiles.active=oracle
+# For SIT/UAT/PROD use: oracle-sit | oracle-uat | oracle-prod
+# Pipeline config: use event configs only (see application.yml streamnova.pipeline.event-config-files).
+#
+streamnova:
+  pipeline:
+    expected-handler: oracle   # Pipeline runs only when source is oracle

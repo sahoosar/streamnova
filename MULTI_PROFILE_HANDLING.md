@@ -1,6 +1,6 @@
 # Handling Multiple Spring Profiles
 
-When you activate **more than one profile** (e.g. `postgres,oracle` or `postgres,postgres-light`), Spring loads **all** matching `application-<profile>.properties` in order. Later profiles override earlier ones for the **same property key**. Here is how StreamNova handles common cases.
+When you activate **more than one profile** (e.g. `postgres,oracle` or `postgres,postgres-light`), Spring loads **all** matching `application-<profile>.yml` in order. Later profiles override earlier ones for the **same property key**. Here is how StreamNova handles common cases.
 
 ---
 
@@ -9,10 +9,10 @@ When you activate **more than one profile** (e.g. `postgres,oracle` or `postgres
 **Profiles:** `postgres,oracle`  
 **Config:** `streamnova.statistics.supported-source-types=postgres,oracle`
 
-- Spring loads `application-postgres.properties` then `application-oracle.properties`.
-- Both set `streamnova.pipeline.config-file`; the **last** profile wins (oracle → `oracle_pipeline_config.yml`).
+- Spring loads `application-postgres.yml` then `application-oracle.yml`.
+- When not using event-configs-only: both can set `streamnova.pipeline.config-file`; the **last** profile wins.
 - **PipelineConfigService** loads that primary file, then **merges** the other DB’s config from the classpath, so you end up with **both** sources: `postgres` and `oracle`.
-- **Default source:** When no `source` is passed (e.g. in API), the app uses `pipeline.config.defaultSource` from the **primary** YAML, or the override below. To choose which DB is default when both are active, set in `application.properties` (or a profile):
+- **Default source:** When no `source` is passed (e.g. in API), the app uses `pipeline.config.defaultSource` from the **primary** YAML, or the override below. To choose which DB is default when both are active, set in `application.yml` (or a profile):
 
   ```properties
   streamnova.pipeline.default-source=postgres
@@ -27,8 +27,8 @@ When you activate **more than one profile** (e.g. `postgres,oracle` or `postgres
 
 **Profiles:** `postgres,postgres-light` or `postgres,postgres-heavy`
 
-- `application-postgres.properties` sets `streamnova.pipeline.config-file` (postgres YAML).
-- `application-postgres-light.properties` (or `-heavy`) only sets `streamnova.pipeline.scenario=light` (or `heavy`); it does **not** set `config-file`.
+- `application-postgres.yml` sets `streamnova.pipeline.config-file` (postgres YAML).
+- `application-postgres-light.yml` (or `-heavy`) only sets `streamnova.pipeline.scenario=light` (or `heavy`); it does **not** set `config-file`.
 - So the config file stays the postgres one, and the **scenario** is applied on top. No conflict.
 
 **Summary:** Safe to use. Config file comes from `postgres`; scenario comes from the second profile.
@@ -39,8 +39,8 @@ When you activate **more than one profile** (e.g. `postgres,oracle` or `postgres
 
 **Profiles:** `postgres,postgres-sit` or `postgres,postgres-uat` or `postgres,postgres-prod`
 
-- `application-postgres.properties` sets the config file.
-- `application-postgres-sit.properties` (etc.) overrides connection/table (e.g. jdbc URL, user, password, table) for that environment.
+- `application-postgres.yml` sets the config file.
+- `application-postgres-sit.yml` (etc.) overrides connection/table (e.g. jdbc URL, user, password, table) for that environment.
 - Use **one** environment profile at a time (e.g. don’t use `postgres-sit,postgres-uat` together).
 
 **Summary:** Use a single env profile with `postgres` to point that instance to SIT, UAT, or prod.
@@ -53,7 +53,7 @@ Spring loads profiles in the order you list them; for a given key, the **last** 
 
 | Goal                         | Example active profiles     | Notes                                                                 |
 |-----------------------------|-----------------------------|-----------------------------------------------------------------------|
-| Only Postgres               | `postgres`                  | Default in `application.properties`.                                  |
+| Only Postgres               | `postgres`                  | Default in `application.yml`.                                  |
 | Postgres + Oracle           | `postgres,oracle`           | Set `supported-source-types=postgres,oracle`; optional `default-source`. |
 | Postgres with “light” load  | `postgres,postgres-light`   | Scenario applied; config file from postgres.                           |
 | Postgres SIT                | `postgres,postgres-sit`     | SIT overrides (URL, user, password, table).                           |
@@ -71,7 +71,7 @@ When both `postgres` and `oracle` (or other sources) are in config, the default 
 Set explicitly when using multiple DBs:
 
 ```properties
-# In application.properties or an active profile
+# In application.yml or an active profile
 streamnova.pipeline.default-source=postgres
 ```
 

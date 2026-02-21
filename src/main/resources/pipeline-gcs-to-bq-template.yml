@@ -1,0 +1,135 @@
+# ============================================================
+# StreamNova - Template YAML (GCS → BigQuery) with Validation + Tracking
+# File name: pipeline-gcs-to-bq-template.yml
+# ============================================================
+# Supports:
+# - Loading into NON-partitioned BigQuery tables
+# - Loading into EXISTING partitioned BigQuery tables (field- or ingestion-partitioned)
+# - Optional: loading into a SPECIFIC partition using table decorator (table$YYYYMMDD)
+# - Optional: creating/updating partitioning settings when CREATE_IF_NEEDED is used (engine-managed)
+# ============================================================
+
+pipeline:
+  execute:
+    mode: "2-stage"
+    sourceKey: "gcs_inputs"
+    destinationKey: "bq_target"
+
+  config:
+    # =====================
+    # SOURCE (GCS)
+    # =====================
+    sources:
+      gcs_inputs:
+        type: gcs
+
+        # Input batch folder (immutable batch recommended)
+        gcsPath: "gs://{inputBucket}/{inputPrefix}/run_id={sourceBatchId}/"
+
+        # Source file format
+        fileFormat: "{fileFormat}"          # PARQUET / AVRO / CSV / JSONL
+
+        # Optional schema path (useful for CSV/JSONL parsing/validation)
+        schemaPath: "gs://{schemaBucket}/{schemaPrefix}/{schemaName}.json"
+
+        # Strongly recommended: input manifest for completeness
+        manifest:
+          enabled: true
+          path: "gs://{inputBucket}/{inputPrefix}/run_id={sourceBatchId}/_manifest.json"
+          requireComplete: true
+
+    # =====================
+    # DESTINATION (BigQuery)
+    # =====================
+    destinations:
+      bq_target:
+        type: bigquery
+
+        project: "{bqProject}"
+        dataset: "{bqDataset}"
+        table: "{bqTable}"
+
+        # Load from the input manifest files (preferred)
+        loadFromManifest: true
+        sourceFormat: "{fileFormat}"
+        writeDisposition: "{writeDisposition}"       # WRITE_APPEND / WRITE_TRUNCATE
+        createDisposition: "{createDisposition}"     # CREATE_IF_NEEDED / CREATE_NEVER
+
+        # ---------------------
+        # Partition support
+        # ---------------------
+        # 1) EXISTING partitioned table:
+        #    - keep both destinationPartitioning.enabled=false and partitionDecorator.enabled=false
+        #    - load into base table; BQ routes rows by partition field (if table is partitioned by field)
+        #
+        # 2) Load into SPECIFIC partition:
+        #    - enable partitionDecorator and provide partitionId (YYYYMMDD)
+        #
+        # 3) Create partitioned table automatically (engine-managed):
+        #    - enable destinationPartitioning when createDisposition=CREATE_IF_NEEDED
+        destinationPartitioning:
+          enabled: false                   # true only if engine should create table partitioned
+          type: "{partitionType}"          # DAY / HOUR / MONTH
+          field: "{partitionField}"        # required for field-partitioned tables (e.g. event_date)
+
+        partitionDecorator:
+          enabled: false                   # true only to load a single partition (table$YYYYMMDD)
+          partitionId: "{partitionId}"     # e.g. 20260215
+
+        # Optional: clustering
+        clustering:
+          enabled: false
+          fields: ["{clusterField1}", "{clusterField2}"]
+
+        # Optional: schema handling
+        schema:
+          schemaPath: "{bqSchemaPath}"             # optional; can be empty for Parquet/Avro
+          allowFieldAddition: true
+          allowFieldRelaxation: true
+
+  # -----------------------
+  # Tracking / Observability
+  # -----------------------
+  tracking:
+    runIdStrategy: "UUID"
+    storeRunMetricsToDb: true
+
+    runMetricsTable: "streamnova.load_run_metrics"
+    stageMetricsTable: "streamnova.load_stage_metrics"
+    fileManifestTable: "streamnova.load_file_manifest"
+
+    includeEffectiveConfig: true
+    includeSourceBatchId: true
+
+    captureBigQueryJobIds: true
+
+    labels:
+      product: "streamnova"
+      pipeline: "gcs_to_bq"
+
+  # -----------------------
+  # Validation
+  # -----------------------
+  validation:
+    # Input sanity
+    failIfEmptyInput: true
+
+    # Manifest validations
+    validateInputManifestFileList: true
+    validateInputManifestRowCounts: true    # enable only if your manifest has rows per file
+
+    # Main integrity check
+    compareGcsReadVsBqLoadedRowCount: true
+    failOnMismatch: true
+    tolerancePct: 0.0
+
+  # -----------------------
+  # Runtime guardrails (recommended)
+  # -----------------------
+  guardrails:
+    allowedFileFormats:
+      - "PARQUET"
+      - "AVRO"
+      - "CSV"
+      - "JSONL"
+    enforceBigQueryDatasetAllowlist: false

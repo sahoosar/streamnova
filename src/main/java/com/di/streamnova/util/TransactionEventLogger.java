@@ -51,7 +51,7 @@ public class TransactionEventLogger {
         // Generate unique application ID: appName-instanceId
         // This ensures each application instance has a unique ID
         this.applicationId = applicationName + "-" + UUID.randomUUID().toString().substring(0, 8);
-        log.info("TransactionEventLogger initialized with applicationId: {}", applicationId);
+        log.info("[TX] TransactionEventLogger initialized with applicationId: {}", applicationId);
     }
 
     /**
@@ -111,7 +111,7 @@ public class TransactionEventLogger {
         
         // Log as structured JSON-like format for easy parsing
         String eventJson = formatEvent(event);
-        log.info("EVENT: {}", eventJson);
+        log.info("[TX] EVENT: {}", eventJson);
     }
 
     /**

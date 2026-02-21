@@ -1,0 +1,26 @@
+# ---------- Listener / pipeline-actions config (independent per 2-stage vs 3-stage) ----------
+# Default entrypoint. For SIT/UAT/PROD use pipeline_listener_config-sit.yml, -uat.yml, -prod.yml
+# (set streamnova.pipeline.listener-config-file in application-{profile}.yml).
+pipeline:
+  config:
+    listeners:
+      "2-stage":
+        actions:
+          - action: SOURCE_READ
+            eventType: LOAD_SOURCE_READ
+          - action: TARGET_WRITE
+            eventType: LOAD_TARGET_WRITE
+      "3-stage":
+        actions:
+          - action: SOURCE_READ
+            eventType: LOAD_SOURCE_READ
+          - action: INTERMEDIATE_WRITE
+            eventType: LOAD_INTERMEDIATE_WRITE
+          - action: TARGET_WRITE
+            eventType: LOAD_TARGET_WRITE
+      # Optional: for validation-only / audit-only runs
+      "validate-only":
+        stages: [VALIDATION]
+        actions:
+          - action: VALIDATE
+            eventType: LOAD_VALIDATE

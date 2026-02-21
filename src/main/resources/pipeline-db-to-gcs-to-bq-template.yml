@@ -1,0 +1,195 @@
+# ============================================================
+# StreamNova - Template YAML (DB → GCS → BigQuery) with Validation + Tracking
+# File name: pipeline-db-to-gcs-to-bq-template.yml
+# ============================================================
+# Updates included:
+# ✅ Supports NON-partitioned BQ tables
+# ✅ Supports EXISTING partitioned BQ tables (COLUMN or INGESTION_TIME) by loading into base table
+# ✅ Supports AUTO-CREATE partitioned tables (engine-managed) via destinationPartitioning
+# ✅ Supports OPTIONAL ingestion-time partition decorator table$YYYYMMDD via partitionDecorator
+# ============================================================
+
+pipeline:
+  execute:
+    mode: "3-stage"
+    sourceKey: "{sourceKey}"
+    intermediateKey: "gcs_stage"
+    destinationKey: "bq_target"
+
+  config:
+    # =====================
+    # SOURCE (DB)
+    # =====================
+    sources:
+      db_source:
+        type: "{sourceType}"            # postgres / oracle
+        driver: "{driverClass}"
+        jdbcUrl: "{jdbcUrl}"
+        username: "{username}"
+        password: "{password}"
+
+        schema: "{sourceSchema}"
+        table: "{sourceTable}"
+        query: "{sourceQuery}"          # optional; engine can use schema+table if empty
+
+        fetchSize: {fetchSize}
+        maximumPoolSize: {maxDbConnections}
+        minimumIdle: {minimumIdle}
+        connectionTimeoutMs: {connectionTimeoutMs}
+        idleTimeoutMs: {idleTimeoutMs}
+        maxLifetimeMs: {maxLifetimeMs}
+        enableProgressLogging: true
+
+        # Parallel read plan (set dynamically by Adaptive Planner)
+        workers: {workers}
+        shards: {shards}
+
+        extraction:
+          mode: "{extractionMode}"            # FULL / INCREMENTAL
+          incrementalColumn: "{incrementalColumn}"
+          watermarkFrom: "{watermarkFrom}"
+          watermarkTo: "{watermarkTo}"
+
+        defaultBytesPerRow: {defaultBytesPerRowBytes}
+
+        sourceRowCount:
+          enabled: {enableSourceRowCount}
+          countQuery: "{sourceCountQuery}"    # e.g. SELECT COUNT(*) FROM schema.table
+
+    # =====================
+    # INTERMEDIATE (GCS stage)
+    # =====================
+    intermediates:
+      gcs_stage:
+        type: gcs
+        bucket: "{stageBucket}"
+        region: "{stageRegion}"
+        basePath: "{stageBasePath}"
+
+        # Structured path for lineage (run-scoped, immutable)
+        objectPathTemplate: "{sourceType}/{sourceSchema}/{sourceTable}/run_id={runId}/dt={yyyy-MM-dd}/"
+
+        fileFormat: "{fileFormat}"        # PARQUET recommended
+        compression: "{compression}"      # SNAPPY for Parquet
+        targetFileSizeMb: {targetFileSizeMb}
+        maxRecordsPerFile: 0
+
+        writeMode: "{writeMode}"          # APPEND recommended
+        commitStrategy: "ATOMIC"
+        tempPathSuffix: "_tmp"
+        cleanupTempOnFailure: true
+
+        # Artifacts to support BQ load + validation
+        writeManifestFile: true
+        writeMetadataFile: true
+        manifestFileName: "_manifest.json"
+        metadataFileName: "_metadata.json"
+
+        addTraceColumns:
+          enabled: {traceEnabled}
+          runIdColumn: "_streamnova_run_id"
+          shardIdColumn: "_streamnova_shard_id"
+          ingestionTsColumn: "_streamnova_ingestion_ts"
+
+    # =====================
+    # DESTINATION (BigQuery)
+    # =====================
+    destinations:
+      bq_target:
+        type: bigquery
+
+        project: "{bqProject}"
+        dataset: "{bqDataset}"
+        table: "{bqTable}"
+
+        # Load from GCS manifest created by gcs_stage
+        loadFromManifest: true
+        sourceFormat: "{fileFormat}"               # should match gcs_stage fileFormat
+        writeDisposition: "{writeDisposition}"      # WRITE_APPEND / WRITE_TRUNCATE
+        createDisposition: "{createDisposition}"    # CREATE_IF_NEEDED / CREATE_NEVER
+
+        # ---------------------
+        # Partition support (non-partitioned + partitioned)
+        # ---------------------
+        # Existing partitioned table:
+        #   - keep destinationPartitioning.enabled=false and partitionDecorator.enabled=false
+        #   - load into base table; BQ routes rows by partition definition
+        #
+        # Auto-create partitioned table (engine-managed):
+        #   - set destinationPartitioning.enabled=true AND createDisposition=CREATE_IF_NEEDED
+        #
+        # Load specific ingestion-time partition (table$YYYYMMDD):
+        #   - set partitionDecorator.enabled=true
+        #   - NOTE: decorator applies to ingestion-time partitioned tables, not column-partitioned tables
+        destinationPartitioning:
+          enabled: false                             # true only if engine should create a partitioned table
+          mode: "{partitionMode}"                    # NONE / INGESTION_TIME / COLUMN
+          type: "{partitionGranularity}"             # DAY / HOUR / MONTH (DAY typical)
+          field: "{partitionField}"                  # required if mode=COLUMN (e.g., event_date)
+          requirePartitionFilter: false              # optional governance (BQ table property)
+
+        partitionDecorator:
+          enabled: false                             # true only for ingestion-time single partition load
+          partitionId: "{partitionId}"               # e.g. 20260215
+
+        clustering:
+          enabled: false
+          fields: ["{clusterField1}", "{clusterField2}"]
+
+        schema:
+          schemaPath: "{bqSchemaPath}"               # optional; if empty rely on Parquet/Avro schema
+          allowFieldAddition: true
+          allowFieldRelaxation: true
+
+  # -----------------------
+  # Tracking / Observability
+  # -----------------------
+  tracking:
+    runIdStrategy: "UUID"
+    storeRunMetricsToDb: true
+
+    runMetricsTable: "streamnova.load_run_metrics"
+    stageMetricsTable: "streamnova.load_stage_metrics"
+    fileManifestTable: "streamnova.load_file_manifest"
+
+    includeEffectiveConfig: true
+    includeSourceIdentity: true
+    includePlannerDecision: true
+
+    captureBigQueryJobIds: true
+
+    labels:
+      product: "streamnova"
+      pipeline: "db_to_gcs_to_bq"
+
+  # -----------------------
+  # Validation
+  # -----------------------
+  validation:
+    # Stage 1: DB → GCS
+    stage1:
+      failIfEmptyOutput: true
+      compareReadVsWriteRowCount: true
+      failOnMismatch: true
+      tolerancePct: 0.0
+      validateSourceRowCount: {enableSourceRowCount}
+      failIfSourceCountMismatch: false     # set true only for FULL loads where safe
+
+    # Stage 2: GCS → BQ
+    stage2:
+      validateManifestFileList: true
+      compareGcsVsBqRowCount: true
+      failOnMismatch: true
+      tolerancePct: 0.0
+
+  # -----------------------
+  # Runtime guardrails (recommended)
+  # -----------------------
+  guardrails:
+    allowedFileFormats:
+      - "PARQUET"
+      - "AVRO"
+      - "CSV"
+      - "JSONL"
+    enforceStageBasePath: true
+    enforceBigQueryDatasetAllowlist: false

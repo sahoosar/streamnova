@@ -1,0 +1,21 @@
+# ============================================================================
+# Profile: oracle-prod (Oracle PROD environment)
+# ============================================================================
+# Same as oracle profile with PROD overrides.
+# Activate: --spring.profiles.active=oracle-prod
+#
+# Override with your PROD values or set env vars: ORACLE_PROD_USERNAME,
+# ORACLE_PROD_PASSWORD, ORACLE_PROD_TABLE.
+# Do not commit real credentials; use secrets in deployment.
+#
+streamnova:
+  pipeline:
+    listener-config-file: classpath:pipeline_listener_config-prod.yml
+
+pipeline:
+  config:
+    source:
+      jdbc-url: jdbc:oracle:thin:@prod-db-host:1521:PROD
+      username: ${ORACLE_PROD_USERNAME:}
+      password: ${ORACLE_PROD_PASSWORD:}
+      table: ${ORACLE_PROD_TABLE:schema.some_table}

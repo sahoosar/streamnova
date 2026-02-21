@@ -1,0 +1,210 @@
+# ============================================================
+# StreamNova - Unified Template (Hive / Impala → GCS → BigQuery)
+# File name: pipeline-hive-impala-to-gcs-to-bq-template.yml
+# ============================================================
+# Supports:
+# - Hive via JDBC (HiveServer2)
+# - Impala via JDBC
+# - Same pipeline pattern: DB → GCS (stage) → BigQuery (target)
+# - Column / ingestion-time partitioned and non-partitioned BQ destinations
+#
+# Placeholders resolved at runtime:
+# {runId}
+#
+# DB selection:
+# {dbEngine}                # HIVE / IMPALA
+# {driverClass}             # org.apache.hive.jdbc.HiveDriver OR com.cloudera.impala.jdbc.Driver
+# {jdbcUrl} {username} {password}
+# {sourceSchema} {sourceTable} {sourceQuery}
+# {fetchSize} {maxDbConnections} {minimumIdle} {connectionTimeoutMs} {idleTimeoutMs} {maxLifetimeMs}
+# {workers} {shards}
+# {extractionMode} {incrementalColumn} {watermarkFrom} {watermarkTo}
+#
+# GCS stage:
+# {stageBucket} {stageRegion} {stageBasePath}
+# {fileFormat} {compression} {targetFileSizeMb} {writeMode} {traceEnabled}
+#
+# BigQuery:
+# {bqProject} {bqDataset} {bqTable}
+# {writeDisposition} {createDisposition}
+# {partitionMode} {partitionGranularity} {partitionField} {partitionId}
+# {bqSchemaPath}
+# ============================================================
+
+pipeline:
+  execute:
+    mode: "3-stage"
+    sourceKey: "warehouse_source"
+    intermediateKey: "gcs_stage"
+    destinationKey: "bq_target"
+
+  config:
+    # =====================
+    # SOURCE (Hive / Impala)
+    # =====================
+    sources:
+      warehouse_source:
+        type: "{dbEngine}"               # HIVE / IMPALA
+        driver: "{driverClass}"
+        jdbcUrl: "{jdbcUrl}"
+        username: "{username}"
+        password: "{password}"
+
+        schema: "{sourceSchema}"
+        table: "{sourceTable}"
+        query: "{sourceQuery}"           # optional; if empty, engine uses schema+table
+
+        # Read tuning
+        fetchSize: {fetchSize}
+        maximumPoolSize: {maxDbConnections}
+        minimumIdle: {minimumIdle}
+        connectionTimeoutMs: {connectionTimeoutMs}
+        idleTimeoutMs: {idleTimeoutMs}
+        maxLifetimeMs: {maxLifetimeMs}
+        enableProgressLogging: true
+
+        # Parallel read plan (set dynamically by Adaptive Planner)
+        workers: {workers}
+        shards: {shards}
+
+        extraction:
+          mode: "{extractionMode}"            # FULL / INCREMENTAL
+          incrementalColumn: "{incrementalColumn}"
+          watermarkFrom: "{watermarkFrom}"
+          watermarkTo: "{watermarkTo}"
+
+        # Optional source count (can be expensive)
+        sourceRowCount:
+          enabled: {enableSourceRowCount}
+          countQuery: "{sourceCountQuery}"
+
+        # Warehouse-specific knobs (optional)
+        warehouseOptions:
+          # Hive:
+          hive:
+            enabled: true
+            jdbcSessionInit:
+              - "set hive.execution.engine=tez"
+              - "set hive.exec.compress.output=true"
+            enableLLAP: false
+
+          # Impala:
+          impala:
+            enabled: true
+            queryOptions:
+              - "MEM_LIMIT=4g"
+              - "NUM_SCANNER_THREADS=2"
+              - "BATCH_SIZE=1024"
+
+    # =====================
+    # INTERMEDIATE (GCS stage)
+    # =====================
+    intermediates:
+      gcs_stage:
+        type: gcs
+        bucket: "{stageBucket}"
+        region: "{stageRegion}"
+        basePath: "{stageBasePath}"
+
+        objectPathTemplate: "{dbEngine}/{sourceSchema}/{sourceTable}/run_id={runId}/dt={yyyy-MM-dd}/"
+
+        fileFormat: "{fileFormat}"        # PARQUET recommended
+        compression: "{compression}"      # SNAPPY for Parquet
+        targetFileSizeMb: {targetFileSizeMb}
+        maxRecordsPerFile: 0
+
+        writeMode: "{writeMode}"          # APPEND recommended
+        commitStrategy: "ATOMIC"
+        tempPathSuffix: "_tmp"
+        cleanupTempOnFailure: true
+
+        writeManifestFile: true
+        writeMetadataFile: true
+        manifestFileName: "_manifest.json"
+        metadataFileName: "_metadata.json"
+
+        addTraceColumns:
+          enabled: {traceEnabled}
+          runIdColumn: "_streamnova_run_id"
+          shardIdColumn: "_streamnova_shard_id"
+          ingestionTsColumn: "_streamnova_ingestion_ts"
+
+    # =====================
+    # DESTINATION (BigQuery)
+    # =====================
+    destinations:
+      bq_target:
+        type: bigquery
+        project: "{bqProject}"
+        dataset: "{bqDataset}"
+        table: "{bqTable}"
+
+        loadFromManifest: true
+        sourceFormat: "{fileFormat}"
+        writeDisposition: "{writeDisposition}"     # WRITE_APPEND / WRITE_TRUNCATE
+        createDisposition: "{createDisposition}"   # CREATE_IF_NEEDED / CREATE_NEVER
+
+        # Partition support (non-partitioned + partitioned)
+        destinationPartitioning:
+          enabled: false                             # true only if engine should create partitioned table
+          mode: "{partitionMode}"                    # NONE / INGESTION_TIME / COLUMN
+          type: "{partitionGranularity}"             # DAY / HOUR / MONTH
+          field: "{partitionField}"                  # required if mode=COLUMN
+          requirePartitionFilter: false
+
+        # Ingestion-time single partition load only (table$YYYYMMDD)
+        partitionDecorator:
+          enabled: false
+          partitionId: "{partitionId}"
+
+        clustering:
+          enabled: false
+          fields: ["{clusterField1}", "{clusterField2}"]
+
+        schema:
+          schemaPath: "{bqSchemaPath}"
+          allowFieldAddition: true
+          allowFieldRelaxation: true
+
+  # -----------------------
+  # Tracking
+  # -----------------------
+  tracking:
+    runIdStrategy: "UUID"
+    storeRunMetricsToDb: true
+    runMetricsTable: "streamnova.load_run_metrics"
+    stageMetricsTable: "streamnova.load_stage_metrics"
+    fileManifestTable: "streamnova.load_file_manifest"
+    includeEffectiveConfig: true
+    includeSourceIdentity: true
+    includePlannerDecision: true
+    captureBigQueryJobIds: true
+    labels:
+      product: "streamnova"
+      pipeline: "hive_impala_to_gcs_to_bq"
+
+  # -----------------------
+  # Validation
+  # -----------------------
+  validation:
+    stage1:
+      failIfEmptyOutput: true
+      compareReadVsWriteRowCount: true
+      failOnMismatch: true
+      tolerancePct: 0.0
+      validateSourceRowCount: {enableSourceRowCount}
+      failIfSourceCountMismatch: false
+
+    stage2:
+      validateManifestFileList: true
+      compareGcsVsBqRowCount: true
+      failOnMismatch: true
+      tolerancePct: 0.0
+
+  # -----------------------
+  # Guardrails
+  # -----------------------
+  guardrails:
+    allowedFileFormats: ["PARQUET", "AVRO", "CSV", "JSONL"]
+    enforceStageBasePath: true
+    enforceBigQueryDatasetAllowlist: false

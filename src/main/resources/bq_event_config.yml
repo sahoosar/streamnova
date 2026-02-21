@@ -1,0 +1,36 @@
+# BigQuery event config: two operations
+# 1) READ from BQ → GCS (source=bigquery, target=gcs): use sources.bigquery
+# 2) WRITE into BQ from DB or GCS (source=postgres/gcs, target=bigquery): use destinations.bigquery
+# GCS destination (outputBucket, fileFormat, etc.) for (1) comes from gcs_event_config.yml when target=gcs.
+pipeline:
+  config:
+    # -------------------------------------------------------------------------
+    # Operation 1: READ from BigQuery (bq → gcs). Feeds pipeline-bq-to-gcs-template.yml
+    # -------------------------------------------------------------------------
+    sources:
+      bigquery:
+        type: bigquery
+        project: my-gcp-project
+        dataset: my_dataset
+        table: employees
+        location: US
+        query: ""
+        schemaPath: gs://my-bucket/schemas/employees_schema.json
+        # Optional partition (when partition.enabled=true in template):
+        # partitionType: NONE | INGESTION_TIME | COLUMN
+        # partitionMode: SINGLE | RANGE
+        # partitionColumn, partitionValue, partitionFrom, partitionTo
+
+    # -------------------------------------------------------------------------
+    # Operation 2: WRITE into BigQuery (db→gcs→bq or gcs→bq). Feeds db-to-gcs-to-bq, gcs-to-bq templates
+    # -------------------------------------------------------------------------
+    destinations:
+      bigquery:
+        type: bigquery
+        project: my-gcp-project
+        dataset: my_dataset
+        table: employees
+        sourceFormat: PARQUET
+        writeDisposition: WRITE_APPEND
+        createDisposition: CREATE_IF_NEEDED
+        schemaPath: gs://my-bucket/schemas/employees_schema.json

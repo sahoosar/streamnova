@@ -1,0 +1,150 @@
+# ============================================================
+# StreamNova - Template YAML (GCS → GCS) with Validation + Tracking
+# ============================================================
+# Goal:
+# - Copy data from GCS input batch folder to GCS output folder
+# - Strong validations: manifest completeness + read vs write row-count match
+# - Full tracking: runId, sourceBatchId, stage metrics, file manifest, effective config
+# - Safe writes: atomic commit with tmp path + cleanup on failure
+#
+# Placeholders resolved at runtime:
+# {inputBucket} {inputPrefix} {sourceBatchId}
+# {schemaBucket} {schemaPrefix} {schemaName}
+# {outputBucket} {outputBasePath}
+# {runId}
+# {fileFormat} {compression} {targetFileSizeMb} {writeMode} {traceEnabled}
+#
+# Notes:
+# - Input manifest is REQUIRED and must exist at:
+#   gs://{inputBucket}/{inputPrefix}/run_id={sourceBatchId}/_manifest.json
+# - Output folder will contain:
+#   _metadata.json + _manifest.json
+# ============================================================
+
+pipeline:
+  execute:
+    mode: "2-stage"
+    sourceKey: "gcs_inputs"
+    destinationKey: "gcs_outputs"
+
+  # -----------------------
+  # Stage configs
+  # -----------------------
+  config:
+    sources:
+      gcs_inputs:
+        type: gcs
+
+        # Input batch folder (immutable batch recommended)
+        gcsPath: "gs://{inputBucket}/{inputPrefix}/run_id={sourceBatchId}/"
+
+        # Input file format
+        fileFormat: "{fileFormat}"     # PARQUET / AVRO / CSV / JSONL
+
+        # Optional schema for validation/parsing (useful for CSV/JSONL)
+        schemaPath: "gs://{schemaBucket}/{schemaPrefix}/{schemaName}.json"
+
+        # Input manifest required for completeness validation
+        manifest:
+          enabled: true
+          path: "gs://{inputBucket}/{inputPrefix}/run_id={sourceBatchId}/_manifest.json"
+          requireComplete: true
+
+        # Optional: how to interpret input shards (if encoded in filename or manifest)
+        shardDetection:
+          enabled: false
+          shardIdRegex: "shard=(\\d+)"   # enable only if your files include shard in name
+
+    destinations:
+      gcs_outputs:
+        type: gcs
+
+        # Output location
+        bucket: "{outputBucket}"
+        basePath: "{outputBasePath}"
+
+        # Structured output folder for lineage (sourceBatchId + runId)
+        objectPathTemplate: "gcs/source_batch={sourceBatchId}/run_id={runId}/dt={yyyy-MM-dd}/"
+
+        # Output format
+        fileFormat: "{fileFormat}"       # keep same as input unless transforming
+        compression: "{compression}"     # SNAPPY (parquet) / GZIP (csv/json)
+        targetFileSizeMb: {targetFileSizeMb}
+
+        # Write semantics
+        writeMode: "{writeMode}"         # APPEND / OVERWRITE (APPEND recommended)
+        commitStrategy: "ATOMIC"         # ATOMIC = write to tmp then promote
+        tempPathSuffix: "_tmp"
+        cleanupTempOnFailure: true
+
+        # Output artifacts for tracking/replay
+        writeManifestFile: true
+        writeMetadataFile: true
+        manifestFileName: "_manifest.json"
+        metadataFileName: "_metadata.json"
+
+        # Optional trace columns for lineage (only if you rewrite/transform rows)
+        addTraceColumns:
+          enabled: {traceEnabled}
+          runIdColumn: "_streamnova_run_id"
+          shardIdColumn: "_streamnova_shard_id"
+          ingestionTsColumn: "_streamnova_ingestion_ts"
+
+  # -----------------------
+  # Tracking / Observability
+  # -----------------------
+  tracking:
+    runIdStrategy: "UUID"                # UUID / TIMESTAMP / EXTERNAL
+    storeRunMetricsToDb: true
+
+    # Tables for analytics / audit
+    runMetricsTable: "streamnova.load_run_metrics"
+    stageMetricsTable: "streamnova.load_stage_metrics"
+    fileManifestTable: "streamnova.load_file_manifest"
+
+    # Store effective resolved YAML for audit/replay (recommended)
+    includeEffectiveConfig: true
+
+    # Persist sourceBatchId for easy correlation queries (recommended)
+    includeSourceBatchId: true
+
+    # Optional labeling (good for logs)
+    labels:
+      product: "streamnova"
+      pipeline: "gcs_to_gcs"
+
+  # -----------------------
+  # Validation
+  # -----------------------
+  validation:
+    # Input sanity
+    failIfEmptyInput: true
+
+    # Manifest validations (strong)
+    validateInputManifestFileList: true
+    validateInputManifestRowCounts: true     # enable only if your manifest includes rows per file
+
+    # Main integrity check (copy correctness)
+    compareReadVsWriteRowCount: true
+    failOnMismatch: true
+    tolerancePct: 0.0
+
+    # Optional: enforce shard completeness if you know expected shard count
+    shardCompleteness:
+      enabled: false
+      expectedShardCount: 0                 # set >0 only if enforced
+      failIfMissingShard: true
+
+  # -----------------------
+  # Runtime guardrails (recommended)
+  # -----------------------
+  guardrails:
+    allowedBuckets:
+      - "{inputBucket}"
+      - "{outputBucket}"
+    allowedFileFormats:
+      - "PARQUET"
+      - "AVRO"
+      - "CSV"
+      - "JSONL"
+    enforceOutputBasePath: true

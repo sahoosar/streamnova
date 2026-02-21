@@ -17,10 +17,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Thread-safe DataSource manager that supports multiple database connections.
- * Each unique database configuration (JDBC URL + username) gets its own connection pool.
+ * Uses a caching mechanism: each unique database configuration (JDBC URL + username + password)
+ * gets a single connection pool that is reused for the lifetime of the application.
  * 
- * This enables multiple applications or multiple database connections within the same application
- * to use this singleton without conflicts.
+ * This enables multiple database connections within the same application to share this singleton
+ * without conflicts; repeated getOrInit(snapshot) for the same config returns the same pooled DataSource.
  */
 @Slf4j
 public enum HikariDataSource {
@@ -31,9 +32,9 @@ public enum HikariDataSource {
     private static final String KEY_SEP = "\0";
 
     /**
-     * Cache of DataSources keyed by connection identifier (JDBC URL + username + password).
-     * Password is included so that when you change the password in pipeline config, the next request
-     * uses the new password (old pool is closed and a new one is created).
+     * Datasource caching: pool per connection key (JDBC URL + username + password).
+     * Reused across getOrInit calls for the same config. Password is included so that when you change
+     * the password in pipeline config, the next request uses the new password (old pool is closed and a new one is created).
      */
     private final ConcurrentMap<String, DataSource> dataSourceCache = new ConcurrentHashMap<>();
 
@@ -42,8 +43,8 @@ public enum HikariDataSource {
 
     /**
      * Gets or creates a DataSource for the given database configuration.
-     * When the password in pipeline config changes, any existing pool for the same URL+user is closed
-     * and a new pool is created with the new password.
+     * On cache hit returns immediately (no pool check per request). On miss, closes any stale pool
+     * for same URL+user (password change) and creates a new pool.
      *
      * @param snapshot Database configuration snapshot
      * @return DataSource for the specified database configuration
@@ -56,11 +57,16 @@ public enum HikariDataSource {
             throw new IllegalArgumentException("password is mandatory: set pipeline.config.source.password in pipeline_config.yml (or use env var e.g. ${POSTGRES_PASSWORD})");
         }
         String connectionKey = generateConnectionKey(snapshot);
+        // Fast path: already have a pool for this config — no per-request pool scan
+        DataSource cached = dataSourceCache.get(connectionKey);
+        if (cached != null) {
+            return cached;
+        }
+        // New or password-changed: close any stale pool for same URL+user, then create
         closePoolIfSameUrlUserDifferentPassword(snapshot, connectionKey);
-
         return dataSourceCache.computeIfAbsent(connectionKey, key -> {
             ConnectionPoolLogger.logConnectionSectionSeparator();
-            log.info("Creating new HikariCP DataSource for connection: {} (user: {})",
+            log.info("[POOL] Creating new HikariCP DataSource for connection: {} (user: {})",
                     sanitizeUrl(snapshot.jdbcUrl()), snapshot.username());
             
             int configMaxPool = snapshot.maximumPoolSize();
@@ -127,7 +133,7 @@ public enum HikariDataSource {
 
     /**
      * If there is an existing pool for the same URL+user but different password (e.g. after changing
-     * password in postgre_pipeline_config.yml), close and remove it so the next request uses the new password.
+     * password in pipeline config YAML), close and remove it so the next request uses the new password.
      */
     private void closePoolIfSameUrlUserDifferentPassword(DbConfigSnapshot snapshot, String newKey) {
         String url = snapshot.jdbcUrl() != null ? snapshot.jdbcUrl() : "";
@@ -220,10 +226,9 @@ public enum HikariDataSource {
     public void closeDataSource(DbConfigSnapshot snapshot) {
         String connectionKey = generateConnectionKey(snapshot);
         DataSource dataSource = dataSourceCache.remove(connectionKey);
-        
-        if (dataSource != null && dataSource instanceof com.zaxxer.hikari.HikariDataSource) {
+        if (dataSource != null && dataSource instanceof com.zaxxer.hikari.HikariDataSource hikari) {
             try {
-                ((com.zaxxer.hikari.HikariDataSource) dataSource).close();
+                hikari.close();
                 log.info("Closed and removed DataSource for connection: {}", sanitizeConnectionKeyForLog(connectionKey));
             } catch (Exception e) {
                 log.warn("Error closing DataSource for connection: {}", sanitizeConnectionKeyForLog(connectionKey), e);
@@ -248,18 +253,16 @@ public enum HikariDataSource {
      */
     public void closeAll() {
         log.info("Closing all DataSources (count: {})", dataSourceCache.size());
-        
         dataSourceCache.forEach((key, dataSource) -> {
-            if (dataSource instanceof com.zaxxer.hikari.HikariDataSource) {
+            if (dataSource instanceof com.zaxxer.hikari.HikariDataSource hikari) {
                 try {
-                    ((com.zaxxer.hikari.HikariDataSource) dataSource).close();
+                    hikari.close();
                     log.debug("Closed DataSource for connection: {}", sanitizeConnectionKeyForLog(key));
                 } catch (Exception e) {
                     log.warn("Error closing DataSource for connection: {}", sanitizeConnectionKeyForLog(key), e);
                 }
             }
         });
-        
         dataSourceCache.clear();
         log.info("All DataSources closed and cache cleared");
     }

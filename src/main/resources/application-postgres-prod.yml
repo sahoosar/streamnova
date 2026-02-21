@@ -1,0 +1,21 @@
+# ============================================================================
+# Profile: postgres-prod (PostgreSQL PROD environment)
+# ============================================================================
+# Same as postgres profile with PROD overrides.
+# Activate: --spring.profiles.active=postgres-prod
+#
+# Override with your PROD values or set env vars: POSTGRES_PROD_DATABASE,
+# POSTGRES_PROD_USERNAME, POSTGRES_PROD_PASSWORD, POSTGRES_PROD_TABLE.
+# Do not commit real credentials; use secrets in deployment.
+#
+streamnova:
+  pipeline:
+    listener-config-file: classpath:pipeline_listener_config-prod.yml
+
+pipeline:
+  config:
+    source:
+      jdbc-url: jdbc:postgresql://prod-db-host:5432/${POSTGRES_PROD_DATABASE:marketdb}
+      username: ${POSTGRES_PROD_USERNAME:}
+      password: ${POSTGRES_PROD_PASSWORD:}
+      table: ${POSTGRES_PROD_TABLE:market_summary}

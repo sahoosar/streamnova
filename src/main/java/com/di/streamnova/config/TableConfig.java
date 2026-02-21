@@ -1,0 +1,31 @@
+package com.di.streamnova.config;
+
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+/**
+ * Per-table config: which connection to use and table name/options.
+ * Defined under pipeline.config.tables.&lt;key&gt; in YAML; the key is used as API source (?source=key).
+ * Only connection and table are required; other fields override the connection's values when set.
+ */
+@Data
+@NoArgsConstructor
+public class TableConfig {
+    /** Connection name (e.g. postgres, oracle). Must be a key in pipeline.config.connections. Required. */
+    private String connection;
+    /** Full table name (e.g. market_summary or schema.some_table). Required. */
+    private String table;
+
+    /** Optional. Max columns to read (0 = no limit). Omit to use connection's value. */
+    private Integer maxColumns;
+    /** Optional. Column for hash-based sharding or partition filter. Omit if not used. */
+    private String upperBoundColumn;
+    /** Optional. Partition value to filter (e.g. date, id). Use with upperBoundColumn. */
+    private String partitionValue;
+    /** Optional. Fallback shard/ordering column when no PK or partition. */
+    private String shardColumn;
+    /** Optional. ORDER BY columns. Omit to use connection's value. */
+    private List<String> orderBy;
+}

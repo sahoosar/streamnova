@@ -7,9 +7,16 @@ import lombok.ToString;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Effective source config for one DB read: connection (JDBC + pool) plus table/shard/partition options.
+ * Comes from pipeline.config.connections.&lt;name&gt; (connection only) or from merging a connection with
+ * pipeline.config.tables.&lt;key&gt; when the API uses ?source=tableKey.
+ */
 @Data
 @NoArgsConstructor
 public class PipelineConfigSource {
+
+    // ----- Connection (required for pool and query; for type=gcs only gcsPath is used) -----
     private String type;
     private String driver;
     private String jdbcUrl;
@@ -17,69 +24,79 @@ public class PipelineConfigSource {
     @ToString.Exclude
     private String password;
     private String table;
+    /** Optional schema (e.g. public); used with table for qualified identifier. */
+    private String schema;
+    /** BigQuery project (when type=bigquery). Used by bq-to-gcs template. */
+    private String project;
+    /** BigQuery dataset (when type=bigquery). Used by bq-to-gcs template. */
+    private String dataset;
+    /** BigQuery location (when type=bigquery). Used by bq-to-gcs template. */
+    private String location;
+    /** Optional query (e.g. BigQuery SQL); overrides table when set. Used by bq-to-gcs template. */
+    private String query;
+    /** GCS path for source when type=gcs (e.g. gs://bucket/prefix*.parquet). Use gcsPaths or gcsLocations for multiple. */
+    private String gcsPath;
+    /** Multiple GCS paths only (optional). Use gcsLocations when each location has a different format (parquet, json, csv). */
+    private List<String> gcsPaths;
+    /** Multiple GCS locations with path and format per folder (parquet, json, csv, etc.). When set, use instead of gcsPath/gcsPaths. */
+    private List<GcsSourceLocation> gcsLocations;
+
+    // ----- Query execution -----
     private int fetchSize;
-    private String upperBoundColumn;
-    private String partitionValue;   // optional - partition value to filter data (supports any data type: date, integer, string, etc.)
-                                     // Use when: Table is partitioned and you want to read only a specific partition
-                                     // Format: Value format depends on column data type:
-                                     //   - Date: "2024-01-15", "2024/01/15", "15-01-2024", etc. (supports multiple formats)
-                                     //   - Integer/BigInt: "12345", "1000000"
-                                     //   - String/Varchar: "partition_2024_01", "region_east"
-                                     //   - Timestamp: "2024-01-15 10:30:00"
-                                     // Works with: upperBoundColumn (partition column name) to filter by specific partition value
-                                     // Example: upperBoundColumn: "created_date", partitionValue: "2024-01-15"
-                                     // Example: upperBoundColumn: "region_id", partitionValue: "5"
-                                     // Example: upperBoundColumn: "region_name", partitionValue: "east"
-                                     // ✅ Auto-detects column type and formats value appropriately
-    private String shardColumn;      // optional - user-provided shard/ordering column for fallback sharding
-                                     // If provided, will be used when no stable keys (PK/index/partition) are found
-                                     // Can be overridden via command line: --pipeline.config.source.shardColumn=column_name
+    private Double fetchFactor;
+    private String defaultBytesPerRow;
+
+    // ----- Table / sharding (optional) -----
+    private String upperBoundColumn;   // Column for hash-based sharding or partition filter
+    private String partitionValue;     // Partition value to filter (date, id, string; use with upperBoundColumn)
+    private String shardColumn;        // Fallback shard column when no PK/partition
     private int maxColumns;
     private List<String> orderBy;
-    private int maximumPoolSize ;  // default 8; when machineType missing use this, else use fallbackPoolSize if 0
-    private int fallbackPoolSize ; // when machineType missing AND maximumPoolSize=0; also when vCPUs cannot be parsed
+
+    // ----- Connection pool -----
+    private int maximumPoolSize;
+    private int fallbackPoolSize;
     private int minimumIdle;
-    private long idleTimeout ;      //  ms
-    private long connectionTimeout; // ms
-    private long maxLifetime ;     // ms
-    private Integer queryTimeout;   // optional - query timeout in seconds (for large partition column datasets)
-                                    //           Default: null (no timeout). Recommended: 3600 (1 hour) for huge datasets
-    private Integer socketTimeout;  // optional - socket timeout in seconds (for network operations)
-                                    //           Default: null (no timeout). Recommended: 300 (5 minutes) for large datasets
-    private Integer statementTimeout; // optional - statement timeout in seconds (PostgreSQL specific)
-                                     //            Default: null (no timeout). Recommended: 3600 (1 hour) for huge datasets
-    private Boolean enableProgressLogging; // optional - enable progress logging for large datasets (default: true)
-                                           //            Set to false to reduce log volume for very large tables
-    private Integer shards;        // optional - user-provided shard count (overrides calculation)
-    private Integer workers;       // optional - user-provided worker count (overrides calculation)
-    private String machineType;    // optional - user-provided machine type (e.g., "n2-standard-4", "n2-highcpu-8")
-    private Double  fetchFactor;   // optional (e.g., 1.25)
-    private String defaultBytesPerRow; // optional (e.g., "1KB") for row size estimation
+    private long idleTimeout;
+    private long connectionTimeout;
+    private long maxLifetime;
+
+    // ----- Timeouts (optional; null = no timeout) -----
+    private Integer queryTimeout;
+    private Integer socketTimeout;
+    private Integer statementTimeout;
+
+    // ----- Behaviour and overrides -----
+    private Boolean enableProgressLogging;
+    private Integer shards;
+    private Integer workers;
+    private String machineType;
 
     /**
-     * Returns the list of config attribute names that are missing or invalid for datasource connection.
-     * Empty list means all required attributes are present and valid.
+     * Returns the list of config attribute names that are missing or invalid for connection pool creation.
+     * Table is not required for the pool; it is required only when reading data (pipeline.config.tables or connection.table).
      */
     public List<String> getMissingAttributesForConnection() {
         List<String> missing = new ArrayList<>();
         if (getType() == null || getType().isBlank()) missing.add("type");
+        boolean isGcs = "gcs".equals(getType() != null ? getType().trim().toLowerCase() : "");
+        if (isGcs) {
+            if (getGcsPath() == null || getGcsPath().isBlank()) missing.add("gcsPath (required when type=gcs)");
+            return missing;
+        }
         if (getDriver() == null || getDriver().isBlank()) missing.add("driver");
         if (getJdbcUrl() == null || getJdbcUrl().isBlank()) missing.add("jdbcUrl");
         else if (!getJdbcUrl().trim().toLowerCase().startsWith("jdbc:")) missing.add("jdbcUrl (must start with jdbc:)");
         if (getUsername() == null || getUsername().isBlank()) missing.add("username");
         if (getPassword() == null || getPassword().isBlank()) missing.add("password");
-        if (getTable() == null || getTable().isBlank()) missing.add("table");
         int maxPoolSize = getMaximumPoolSize() > 0 ? getMaximumPoolSize() : getFallbackPoolSize();
         if (maxPoolSize <= 0) missing.add("maximumPoolSize or fallbackPoolSize");
-        if (getIdleTimeout() <= 0) missing.add("idleTimeout");
-        if (getConnectionTimeout() <= 0) missing.add("connectionTimeout");
-        if (getMaxLifetime() <= 0) missing.add("maxLifetime");
         return missing;
     }
 
     /**
-     * Builds a DbConfigSnapshot from pipeline config (e.g. for HikariDataSource.getOrInit).
-     * Validates required fields and uses pool and timeout values from config as-is.
+     * Builds a DbConfigSnapshot for connection pool creation (e.g. HikariDataSource.getOrInit).
+     * Table is not required here; it is required only when reading data (set in pipeline.config.tables or on connection).
      */
     public DbConfigSnapshot toDbConfigSnapshot() {
         if (getType() == null || getType().isBlank()) {
@@ -99,9 +116,6 @@ public class PipelineConfigSource {
         }
         if (getPassword() == null || getPassword().isBlank()) {
             throw new IllegalArgumentException("pipeline.config.source.password is required and must be non-empty in pipeline_config.yml (or set via env var, e.g. ${POSTGRES_PASSWORD})");
-        }
-        if (getTable() == null || getTable().isBlank()) {
-            throw new IllegalArgumentException("pipeline.config.source.table is required in pipeline_config.yml (e.g. market_summary)");
         }
         int maxPoolSize = getMaximumPoolSize() > 0 ? getMaximumPoolSize() : getFallbackPoolSize();
         if (maxPoolSize <= 0) {

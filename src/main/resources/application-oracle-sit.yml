@@ -1,0 +1,20 @@
+# ============================================================================
+# Profile: oracle-sit (Oracle SIT environment)
+# ============================================================================
+# Same as oracle profile with SIT overrides.
+# Activate: --spring.profiles.active=oracle-sit
+#
+# Override with your SIT values or set env vars: ORACLE_SIT_USERNAME,
+# ORACLE_SIT_PASSWORD, ORACLE_SIT_TABLE.
+#
+streamnova:
+  pipeline:
+    listener-config-file: classpath:pipeline_listener_config-sit.yml
+
+pipeline:
+  config:
+    source:
+      jdbc-url: jdbc:oracle:thin:@sit-db-host:1521:SIT
+      username: ${ORACLE_SIT_USERNAME:sit_user}
+      password: ${ORACLE_SIT_PASSWORD:}
+      table: ${ORACLE_SIT_TABLE:schema.some_table}
