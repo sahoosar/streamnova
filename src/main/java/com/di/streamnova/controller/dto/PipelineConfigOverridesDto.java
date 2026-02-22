@@ -23,6 +23,8 @@ public class PipelineConfigOverridesDto {
     private Integer fetchSize;
     private String upperBoundColumn;
     private String partitionValue;
+    private String partitionStartValue;
+    private String partitionEndValue;
     private String shardColumn;
     private List<String> orderBy;
     private Integer maximumPoolSize;

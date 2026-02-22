@@ -731,6 +731,10 @@ public class PipelineConfigService {
         else merged.setUpperBoundColumn(connection.getUpperBoundColumn());
         if (table.getPartitionValue() != null) merged.setPartitionValue(table.getPartitionValue());
         else merged.setPartitionValue(connection.getPartitionValue());
+        if (table.getPartitionStartValue() != null) merged.setPartitionStartValue(table.getPartitionStartValue());
+        else merged.setPartitionStartValue(connection.getPartitionStartValue());
+        if (table.getPartitionEndValue() != null) merged.setPartitionEndValue(table.getPartitionEndValue());
+        else merged.setPartitionEndValue(connection.getPartitionEndValue());
         if (table.getShardColumn() != null) merged.setShardColumn(table.getShardColumn());
         else merged.setShardColumn(connection.getShardColumn());
         if (table.getOrderBy() != null) merged.setOrderBy(table.getOrderBy());

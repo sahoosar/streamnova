@@ -35,19 +35,19 @@ import java.util.Map;
 import java.util.stream.IntStream;
 
 /**
- * Handler for reading data from PostgreSQL databases.
- * 
- * This handler implements parallel data reading from PostgreSQL using sharding
- * based on machine type and data characteristics.
- * 
- * Features:
- * - Uses TypeConverter for type mapping and value conversion
- * - Integrates with ShardPlanner for optimal shard/worker calculation
- * - Supports shard_id tracking for per-shard metrics
- * - Handles all PostgreSQL types including BYTEA, JSON, UUID, arrays
- * - Implements transaction isolation for data consistency
- * - Automatic primary key detection for stable sharding
- * - Row count validation for completeness
+ * Handler for reading data from PostgreSQL with parallel sharded reads.
+ *
+ * <p><b>Sharding</b> – Rows are split across shards by a shard column (auto-detected or from config).
+ * Priority: upperBoundColumn (config) → index → primary key → composite PK (first col) → partition key → shardColumn (config) → ordering column → ctid.
+ * See {@link #buildShardedQuery} and {@link #detectStableShardColumn} for details and examples.
+ *
+ * <p><b>Partition filtering</b> – Optional WHERE to load only one partition or a range:
+ * <ul>
+ *   <li>Single value: partitionValue + upperBoundColumn (or auto-detected partition column) → e.g. {@code WHERE created_date = DATE '2024-01-15'}</li>
+ *   <li>Range: partitionStartValue + partitionEndValue → e.g. {@code WHERE created_date >= DATE '2024-01-01' AND created_date <= DATE '2024-01-31'}</li>
+ * </ul>
+ *
+ * <p>Other: TypeConverter for types, ShardPlanner for shard/worker count, shard_id in schema, row count validation.
  */
 @Slf4j
 @Component
@@ -56,6 +56,7 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
 
     private final MetricsCollector metricsCollector;
     private final ShardPlanner shardPlanner;
+    private final AdaptiveFetchProperties adaptiveFetchProperties;
 
     @Override
     public String type() {
@@ -196,31 +197,58 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     // Statistics estimation moved to PostgresStatisticsEstimator
     // Schema detection moved to PostgresSchemaDetector
 
+    // ==================== Sharded Query Building ====================
+    //
+    // This method decides which column(s) to use for splitting the table across shards,
+    // and optionally applies a partition filter (single value or date range).
+    //
+    // CONFIG EXAMPLES (YAML or pipeline.config.source):
+    //   # Full table load, auto-detect shard column (PK/index/partition key):
+    //   table: public.orders
+    //
+    //   # Hash-shard on a specific column (fastest when you know the column):
+    //   upperBoundColumn: id
+    //
+    //   # Load one partition only (e.g. one day):
+    //   upperBoundColumn: created_date
+    //   partitionValue: "2024-01-15"
+    //
+    //   # Load a date range (e.g. January 2024):
+    //   upperBoundColumn: created_date
+    //   partitionStartValue: "2024-01-01"
+    //   partitionEndValue: "2024-01-31"
+    //
+    //   # Table has no PK/index: specify fallback column for ROW_NUMBER() sharding:
+    //   shardColumn: updated_at
+    //
+
     /**
      * Builds a sharded SQL query for parallel data reading.
-     * 
-     * Priority order for shard column selection:
-     * 1. upperBoundColumn (from config) → Hash-based sharding (fastest, most stable)
-     *    Use when: You want hash-based sharding for performance-critical scenarios
-     * 2. Auto-detected stable keys (index, primary key, composite PK, partition key) → Hash-based sharding
-     *    Use when: Table has primary key or index (system auto-detects)
-     * 3. shardColumn (from config) → ROW_NUMBER() sharding (stable, slightly slower)
-     *    Use when: Table has no PK/index, and you want to specify which column to use for ordering
-     *    Do NOT use when: Table has PK/index (system will auto-detect) or performance is critical
-     * 4. Auto-detected ordering column → ROW_NUMBER() sharding (stable, slightly slower)
-     *    Use when: No stable keys found and no shardColumn specified
-     * 5. ctid (last resort) → Unstable, only if no columns available
-     * 
-     * Partition Value Filtering:
-     * - If partitionValue is provided with upperBoundColumn, adds WHERE clause to filter by specific partition value
-     * - Auto-detects column data type and formats value appropriately (date, integer, string, etc.)
-     * - Example: upperBoundColumn: "created_date", partitionValue: "2024-01-15" → WHERE created_date = DATE '2024-01-15'
-     * - Example: upperBoundColumn: "region_id", partitionValue: "5" → WHERE region_id = 5
-     * - Example: upperBoundColumn: "region_name", partitionValue: "east" → WHERE region_name = 'east'
-     * 
+     *
+     * <p><b>Shard column priority</b> (which column is used to assign each row to a shard):
+     * <ol>
+     *   <li><b>upperBoundColumn</b> (config) – Hash-based; use when you want to force a specific column.
+     *       Example: upperBoundColumn: id</li>
+     *   <li><b>Auto-detected</b> – Index → single PK → composite PK (first column) → partition key → non-null from first 3 columns.
+     *       Example: table has PRIMARY KEY (id) → we use "id" for hashing.</li>
+     *   <li><b>shardColumn</b> (config) – ROW_NUMBER() over that column; stable but slower. Use when table has no PK/index.</li>
+     *   <li><b>Auto-detected ordering column</b> – Same as above, column chosen from first columns.</li>
+     *   <li><b>ctid</b> – Last resort; unstable if VACUUM runs.</li>
+     * </ol>
+     *
+     * <p><b>Partition filtering</b> (optional – limits which rows are read):
+     * <ul>
+     *   <li><b>Single value:</b> partitionValue + partition column (upperBoundColumn or auto-detected).
+     *       Example: partitionValue: "2024-01-15", upperBoundColumn: created_date
+     *       → WHERE created_date = DATE '2024-01-15'</li>
+     *   <li><b>Date range:</b> partitionStartValue + partitionEndValue + partition column.
+     *       Example: partitionStartValue: "2024-01-01", partitionEndValue: "2024-01-31", upperBoundColumn: created_date
+     *       → WHERE created_date >= DATE '2024-01-01' AND created_date <= DATE '2024-01-31'</li>
+     * </ul>
+     *
      * @param dataSource DataSource for database connection
-     * @param config Pipeline configuration
-     * @return SQL query string with sharding WHERE clause (and partition date filter if specified)
+     * @param config Pipeline configuration (table, upperBoundColumn, partitionValue, etc.)
+     * @return SQL query string with sharding WHERE clause (and optional partition filter)
      */
     private String buildShardedQuery(DataSource dataSource, PipelineConfigSource config) {
         String tableName = config.getTable();
@@ -228,33 +256,46 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             throw new IllegalArgumentException("Table name is required");
         }
         
-        // Check for partition value filtering
+        // Check for partition value filtering (single value or date range)
         String partitionValue = config.getPartitionValue();
-        boolean hasPartitionFilter = partitionValue != null && !partitionValue.isBlank();
+        String partitionStartValue = config.getPartitionStartValue();
+        String partitionEndValue = config.getPartitionEndValue();
+        boolean hasPartitionRange = partitionStartValue != null && !partitionStartValue.isBlank()
+                && partitionEndValue != null && !partitionEndValue.isBlank();
+        boolean hasPartitionSingle = partitionValue != null && !partitionValue.isBlank();
+        boolean hasPartitionFilter = hasPartitionSingle || hasPartitionRange;
+        String partitionFilterDesc = hasPartitionRange ? (partitionStartValue + " to " + partitionEndValue) : partitionValue;
         
-        // Log partition filtering status (partitionValue is optional)
+        // Log partition filtering status
         if (!hasPartitionFilter) {
-            log.debug("partitionValue not provided - partition filtering is optional. " +
-                    "System will process all data from table '{}' without partition filtering. " +
-                    "To filter by partition, provide both partitionValue and upperBoundColumn in config or command line.",
+            log.debug("Partition filter not provided - optional. " +
+                    "System will process all data from table '{}'. " +
+                    "Use partitionValue (single) or partitionStartValue + partitionEndValue (date range) with upperBoundColumn or auto-detected partition column.",
                     tableName);
+        } else if (hasPartitionRange) {
+            log.info("Partition range provided: '{}' to '{}' - range filter will be applied when partition column is available",
+                    partitionStartValue, partitionEndValue);
         } else {
-            log.info("partitionValue provided: '{}' - partition filtering will be applied if upperBoundColumn is also provided",
+            log.info("partitionValue provided: '{}' - single-value partition filter will be applied when partition column is available",
                     partitionValue);
         }
         
-        // Priority 1: Use upperBoundColumn for hash-based sharding (fastest, most stable)
-        // Use this when: You want hash-based sharding for performance-critical scenarios
+        // --- Priority 1: Config-specified column (upperBoundColumn) ---
+        // Example YAML: upperBoundColumn: id  → hash on "id", best when you know the best column
         String upperBoundCol = config.getUpperBoundColumn();
         if (upperBoundCol != null && !upperBoundCol.isBlank()) {
             // Validate column name to prevent SQL injection (fail fast)
             InputValidator.validateColumnName(upperBoundCol);
             
             // Log shard column selection and verify distribution potential
-            String shardColForLogging = upperBoundCol;
             if (hasPartitionFilter) {
-                log.info("Using upperBoundColumn '{}' for hash-based sharding with partition value filter: '{}'", 
-                        upperBoundCol, partitionValue);
+                if (hasPartitionRange) {
+                    log.info("Using upperBoundColumn '{}' for hash-based sharding with partition range filter: '{}' to '{}'",
+                            upperBoundCol, partitionStartValue, partitionEndValue);
+                } else {
+                    log.info("Using upperBoundColumn '{}' for hash-based sharding with partition value filter: '{}'",
+                            upperBoundCol, partitionValue);
+                }
             } else {
                 log.info("Using upperBoundColumn '{}' for hash-based sharding (fastest, most stable). " +
                         "Query will use hashtext() function for even distribution across shards.", upperBoundCol);
@@ -264,9 +305,8 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             return buildHashBasedQuery(tableName, upperBoundCol, dataSource, config);
         }
         
-        // Priority 2: Auto-detect stable shard column (index, primary key, composite primary key, partition key)
-        // Use this when: Table has primary key or index (system auto-detects)
-        // This provides hash-based sharding (fast) without requiring user configuration
+        // --- Priority 2: Auto-detect (index → PK → composite PK first col → partition key → non-null cols) ---
+        // Example: table has PRIMARY KEY (id) → we use "id" for hash-based sharding; no config needed
         ShardColumnInfo shardColumnInfo = detectStableShardColumn(dataSource, config);
         if (shardColumnInfo != null && shardColumnInfo.columnName != null && !shardColumnInfo.columnName.isBlank()) {
             // Check if multiple columns are specified (comma-separated)
@@ -278,9 +318,9 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                     columns.add(col.trim());
                 }
                 if (hasPartitionFilter) {
-                    log.info("Auto-detected {} stable shard column(s) {} (types: {}) for multi-column hash-based sharding with partition value filter: '{}'. " +
+                    log.info("Auto-detected {} stable shard column(s) {} (types: {}) for multi-column hash-based sharding with partition filter: '{}'. " +
                             "Table has no PK/index but multiple non-null columns found - using multi-column hash-based sharding.", 
-                            columns.size(), columns, shardColumnInfo.columnType, partitionValue);
+                            columns.size(), columns, shardColumnInfo.columnType, partitionFilterDesc);
                 } else {
                     log.info("Auto-detected {} stable shard column(s) {} (types: {}) for multi-column hash-based sharding. " +
                             "Table has no PK/index but multiple non-null columns found - using multi-column hash-based sharding.", 
@@ -288,13 +328,14 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                 }
                 // Verify first column has sufficient distinct values for good distribution
                 verifyShardColumnDistribution(dataSource, config, columns.get(0), tableName);
-                return buildMultiColumnHashBasedQuery(tableName, columns, dataSource, config);
+                String partitionFilterCol = (hasPartitionFilter && (config.getUpperBoundColumn() == null || config.getUpperBoundColumn().isBlank())) ? columns.get(0) : null;
+                return buildMultiColumnHashBasedQuery(tableName, columns, dataSource, config, partitionFilterCol);
             } else {
                 // Single column - use standard hash-based sharding
                 if (hasPartitionFilter) {
-                    log.info("Auto-detected stable shard column '{}' (type: {}) for hash-based sharding with partition value filter: '{}'. " +
+                    log.info("Auto-detected stable shard column '{}' (type: {}) for hash-based sharding with partition filter: '{}'. " +
                             "Table has primary key/index - using fast hash-based sharding with hashtext() for even distribution.", 
-                            shardColumnInfo.columnName, shardColumnInfo.columnType, partitionValue);
+                            shardColumnInfo.columnName, shardColumnInfo.columnType, partitionFilterDesc);
                 } else {
                     log.info("Auto-detected stable shard column '{}' (type: {}) for hash-based sharding. " +
                             "Table has primary key/index - using fast hash-based sharding with hashtext() for even distribution.", 
@@ -302,14 +343,13 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                 }
                 // Verify column has sufficient distinct values for good distribution
                 verifyShardColumnDistribution(dataSource, config, shardColumnInfo.columnName, tableName);
-                return buildHashBasedQuery(tableName, shardColumnInfo.columnName, dataSource, config);
+                String partitionFilterCol = (hasPartitionFilter && (config.getUpperBoundColumn() == null || config.getUpperBoundColumn().isBlank())) ? shardColumnInfo.columnName : null;
+                return buildHashBasedQuery(tableName, shardColumnInfo.columnName, dataSource, config, partitionFilterCol);
             }
         }
         
-        // Priority 3: Use shardColumn from config (for fallback ROW_NUMBER() sharding)
-        // Use this when: Table has NO primary key/index, and you want to specify which column to use
-        // Do NOT use when: Table has PK/index (system will auto-detect) or performance is critical
-        // Note: This uses ROW_NUMBER() sharding (stable but slower than hash-based)
+        // --- Priority 3: Config fallback column (shardColumn) for ROW_NUMBER() sharding ---
+        // Example YAML: shardColumn: updated_at  → use when table has no PK/index; stable but slower
         String userShardColumn = config.getShardColumn();
         if (userShardColumn != null && !userShardColumn.isBlank()) {
             // Validate column name to prevent SQL injection
@@ -327,9 +367,9 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             }
             
             if (hasPartitionFilter) {
-                log.info("Applied ROW_NUMBER() (shardColumn: '{}') with partition value filter: '{}'. " +
+                log.info("Applied ROW_NUMBER() (shardColumn: '{}') with partition filter: '{}'. " +
                         "Table has no stable keys (PK/index) - using user-specified column for stable sharding.", 
-                        userShardColumn, partitionValue);
+                        userShardColumn, partitionFilterDesc);
             } else {
                 log.info("Applied ROW_NUMBER() (shardColumn: '{}'): stable but slower. " +
                         "Table has no stable keys (PK/index) - using user-specified column for stable sharding.", 
@@ -338,8 +378,7 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             return buildRowNumberBasedQuery(tableName, userShardColumn, dataSource, config);
         }
         
-        // Priority 4: Fallback to ROW_NUMBER() with auto-detected ordering column (more stable than ctid)
-        // This approach uses any available column(s) for ordering, making it stable even if VACUUM runs
+        // --- Priority 4: Auto-detected ordering column for ROW_NUMBER() (no PK/index, no shardColumn set) ---
         OrderingColumnInfo orderingColumnInfo = detectOrderingColumn(dataSource, config);
         if (orderingColumnInfo != null && orderingColumnInfo.columnName != null && !orderingColumnInfo.columnName.isBlank()) {
             String orderingColumn = orderingColumnInfo.columnName;
@@ -351,13 +390,13 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             
             if (!isOptimal) {
                 if (hasPartitionFilter) {
-                    log.warn("Applied ROW_NUMBER() (auto-detected ordering column: '{}', {}) with partition value filter: '{}'. " +
+                    log.warn("Applied ROW_NUMBER() (auto-detected ordering column: '{}', {}) with partition filter: '{}'. " +
                             "Auto-detected column is not numeric or timestamp type. " +
                             "No stable shard column found for table '{}' and shardColumn not provided in config. " +
                             "For optimal performance, consider adding a primary key, index, or partition key, " +
                             "or specifying a numeric/timestamp shardColumn in config (shardColumn: column_name) or via command line " +
                             "(--pipeline.config.source.shardColumn=column_name).",
-                            orderingColumn, typeInfo, partitionValue, tableName);
+                            orderingColumn, typeInfo, partitionFilterDesc, tableName);
                 } else {
                     log.warn("Applied ROW_NUMBER() (auto-detected ordering column: '{}', {}): stable but slower. " +
                             "Auto-detected column is not numeric or timestamp type. " +
@@ -369,10 +408,10 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                 }
             } else {
                 if (hasPartitionFilter) {
-                    log.warn("Applied ROW_NUMBER() (auto-detected ordering column: '{}', {}) with partition value filter: '{}'. " +
+                    log.warn("Applied ROW_NUMBER() (auto-detected ordering column: '{}', {}) with partition filter: '{}'. " +
                             "No stable shard column found for table '{}' and shardColumn not provided in config. " +
                             "Consider adding a primary key, index, or partition key, or specifying shardColumn in config for better performance.",
-                            orderingColumn, typeInfo, partitionValue, tableName);
+                            orderingColumn, typeInfo, partitionFilterDesc, tableName);
                 } else {
                     log.warn("Applied ROW_NUMBER() (auto-detected ordering column: '{}', {}): stable but slower. " +
                             "No stable shard column found for table '{}' and shardColumn not provided in config. " +
@@ -383,13 +422,13 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             return buildRowNumberBasedQuery(tableName, orderingColumn, dataSource, config);
         }
         
-        // Priority 5: Last resort - ctid (unstable, but works if no columns available)
+        // --- Priority 5: Last resort – ctid (unstable; avoid if possible) ---
         if (hasPartitionFilter) {
-            log.error("No columns available for ordering in table '{}'. Using unstable ctid for sharding with partition value filter: '{}'. " +
+            log.error("No columns available for ordering in table '{}'. Using unstable ctid for sharding with partition filter: '{}'. " +
                     "WARNING: ctid-based sharding is UNSTABLE even with no data changes because: " +
                     "(1) VACUUM operations can change ctid values, (2) rows may be skipped or duplicated across shards. " +
                     "Strongly recommend adding a primary key, index, or at least one column for stable ordering.", 
-                    tableName, partitionValue);
+                    tableName, partitionFilterDesc);
         } else {
             log.error("No columns available for ordering in table '{}'. Using unstable ctid for sharding. " +
                     "WARNING: ctid-based sharding is UNSTABLE even with no data changes because: " +
@@ -420,18 +459,21 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     private record OrderingColumnInfo(String columnName, String dataType) {}
     
     /**
-     * Detects a stable shard column for a table in priority order:
-     * 1. Index key (unique or non-unique index)
-     * 2. Primary key column (single column)
-     * 3. Composite primary key (first column)
-     * 4. Partition key
-     * 5. Non-null column from first 3 columns (if available)
-     * 
-     * Note: Sharding uses ONE column at a time, not multiple columns.
-     * This method selects the best single column for sharding.
-     * 
+     * Detects a stable shard column for a table (used when upperBoundColumn is not set in config).
+     *
+     * <p><b>Priority order</b> (first match wins):
+     * <ol>
+     *   <li><b>Index key</b> – Any non-PK index (unique or not). Example: table has INDEX(tenant_id) → use "tenant_id".</li>
+     *   <li><b>Primary key (single)</b> – One-column PK. Example: PRIMARY KEY (id) → use "id".</li>
+     *   <li><b>Composite primary key</b> – Use first column only (faster than hashing all). Example: PRIMARY KEY (tenant_id, id) → use "tenant_id".</li>
+     *   <li><b>Partition key</b> – Table is partitioned; use partition column. Example: PARTITION BY RANGE (created_date) → use "created_date".</li>
+     *   <li><b>Non-null from first 3 columns</b> – No PK/index; use 2–3 non-null columns for multi-column hash, or 1 as fallback.</li>
+     * </ol>
+     *
+     * <p>When both PK and index exist, index is chosen (priority 1). For composite PK we use only the first column for performance.
+     *
      * @param dataSource DataSource for database connection
-     * @param config Pipeline configuration
+     * @param config Pipeline configuration (table name used to resolve schema.table)
      * @return ShardColumnInfo with column name and type, or null if none found
      */
     private ShardColumnInfo detectStableShardColumn(DataSource dataSource, PipelineConfigSource config) {
@@ -452,16 +494,13 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                 return indexColumn;
             }
             
-            // Priority 2: Check for primary key (single column)
-            ShardColumnInfo primaryKeyColumn = detectPrimaryKey(conn, schemaName, tableNameOnly, false);
-            if (primaryKeyColumn != null) {
-                return primaryKeyColumn;
-            }
-            
-            // Priority 3: Check for composite primary key (use first column)
-            ShardColumnInfo compositePrimaryKey = detectPrimaryKey(conn, schemaName, tableNameOnly, true);
-            if (compositePrimaryKey != null) {
-                return compositePrimaryKey;
+            // Priority 2 & 3: Check for primary key (single or composite; use first column only for composite for performance)
+            List<String> pkColumns = detectPrimaryKeyColumnList(conn, schemaName, tableNameOnly);
+            if (pkColumns != null && !pkColumns.isEmpty()) {
+                String column = pkColumns.get(0);
+                InputValidator.validateColumnName(column);
+                String columnType = pkColumns.size() == 1 ? "PRIMARY_KEY" : "COMPOSITE_PRIMARY_KEY_FIRST";
+                return new ShardColumnInfo(column, columnType);
             }
             
             // Priority 4: Check for partition key
@@ -638,14 +677,9 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     }
     
     /**
-     * Detects index key columns for a table.
-     * Prefers unique indexes, then non-unique indexes.
-     * Returns the first column of the first suitable index.
-     * 
-     * @param conn Database connection
-     * @param schemaName Schema name
-     * @param tableNameOnly Table name (without schema)
-     * @return ShardColumnInfo with index column name, or null if no index found
+     * Detects an index column for sharding (excluding PK indexes).
+     * Prefers unique index, then any index; returns first column of chosen index.
+     * Example: table has INDEX(tenant_id), UNIQUE(booking_id) → returns first column of unique index if any, else tenant_id.
      */
     private ShardColumnInfo detectIndexKey(Connection conn, String schemaName, String tableNameOnly) throws SQLException {
         // Query to find index columns
@@ -682,6 +716,34 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     }
     
     /**
+     * Returns all primary key column names in order. Single PK → [id]; composite PK → [tenant_id, id].
+     * Used to pick first column for sharding when composite (for performance we use one column only).
+     */
+    private List<String> detectPrimaryKeyColumnList(Connection conn, String schemaName, String tableNameOnly) throws SQLException {
+        String sql = "SELECT kcu.column_name " +
+                    "FROM information_schema.table_constraints tc " +
+                    "JOIN information_schema.key_column_usage kcu " +
+                    "  ON tc.constraint_name = kcu.constraint_name " +
+                    "  AND tc.table_schema = kcu.table_schema " +
+                    "  AND tc.table_catalog = kcu.table_catalog " +
+                    "WHERE tc.constraint_type = 'PRIMARY KEY' " +
+                    "  AND tc.table_schema = ? " +
+                    "  AND tc.table_name = ? " +
+                    "ORDER BY kcu.ordinal_position";
+        List<String> columns = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schemaName);
+            ps.setString(2, tableNameOnly);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    columns.add(rs.getString("column_name"));
+                }
+            }
+        }
+        return columns.isEmpty() ? null : columns;
+    }
+
+    /**
      * Detects primary key column(s) for a table.
      * 
      * @param conn Database connection
@@ -691,54 +753,25 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
      * @return ShardColumnInfo with primary key column name, or null if no primary key found
      */
     private ShardColumnInfo detectPrimaryKey(Connection conn, String schemaName, String tableNameOnly, boolean allowComposite) throws SQLException {
-        // Query to detect primary key columns using information_schema
-        String sql = "SELECT kcu.column_name, " +
-                    "       COUNT(*) OVER (PARTITION BY tc.constraint_name) AS key_column_count " +
-                    "FROM information_schema.table_constraints tc " +
-                    "JOIN information_schema.key_column_usage kcu " +
-                    "  ON tc.constraint_name = kcu.constraint_name " +
-                    "  AND tc.table_schema = kcu.table_schema " +
-                    "  AND tc.table_catalog = kcu.table_catalog " +
-                    "WHERE tc.constraint_type = 'PRIMARY KEY' " +
-                    "  AND tc.table_schema = ? " +
-                    "  AND tc.table_name = ? " +
-                    "ORDER BY kcu.ordinal_position " +
-                    "LIMIT 1";
-        
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, schemaName);
-            ps.setString(2, tableNameOnly);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    long keyColumnCount = rs.getLong("key_column_count");
-                    
-                    // If allowComposite is false, only return single-column primary keys
-                    if (!allowComposite && keyColumnCount > 1) {
-                        return null;
-                    }
-                    
-                    String columnName = rs.getString("column_name");
-                    InputValidator.validateColumnName(columnName);
-                    
-                    String columnType = keyColumnCount == 1 ? "PRIMARY_KEY" : "COMPOSITE_PRIMARY_KEY_FIRST";
-                    return new ShardColumnInfo(columnName, columnType);
-                }
-            }
+        List<String> pkColumns = detectPrimaryKeyColumnList(conn, schemaName, tableNameOnly);
+        if (pkColumns == null || pkColumns.isEmpty()) {
+            return null;
         }
-        return null;
+        if (!allowComposite && pkColumns.size() > 1) {
+            return null;
+        }
+        String columnName = pkColumns.get(0);
+        InputValidator.validateColumnName(columnName);
+        String columnType = pkColumns.size() == 1 ? "PRIMARY_KEY" : "COMPOSITE_PRIMARY_KEY_FIRST";
+        return new ShardColumnInfo(columnName, columnType);
     }
     
     /**
-     * Detects partition key column for a partitioned table.
-     * 
-     * @param conn Database connection
-     * @param schemaName Schema name
-     * @param tableNameOnly Table name (without schema)
-     * @return ShardColumnInfo with partition key column name, or null if table is not partitioned
+     * Detects partition key column for a partitioned table (e.g. PARTITION BY RANGE (created_date) → "created_date").
+     * Returns first partition column; used for hash-based sharding and for partition filter when user sets partitionValue/range.
      */
     private ShardColumnInfo detectPartitionKey(Connection conn, String schemaName, String tableNameOnly) throws SQLException {
-        // Query to detect partition key columns
-        // Uses pg_partitioned_table and pg_attribute system catalogs
+        // pg_partitioned_table + pg_attribute to get partition column(s); we use the first one
         String sql = "SELECT a.attname AS column_name " +
                     "FROM pg_partitioned_table pt " +
                     "JOIN pg_class c ON c.oid = pt.partrelid " +
@@ -767,21 +800,26 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     }
     
     /**
-     * Builds a hash-based sharding query using a specific column.
-     * Uses MD5 hash of the column value for deterministic shard assignment.
-     * 
-     * @param tableName Table name (may include schema)
-     * @param shardColumn Column name to use for sharding
-     * @param dataSource DataSource for database connection (for partition value filtering)
-     * @param config Pipeline configuration (for partition value filtering)
-     * @return SQL query with hash-based WHERE clause (and partition value filter if specified)
+     * Builds a hash-based sharding query using a single column.
+     * Each row is assigned to a shard by: hash(column_value) % shardCount == shardIndex.
+     * Example: shardColumn="id" → WHERE (abs(...md5(id::text)...) % ?) = ?  (plus optional partition filter).
+     *
+     * @param tableName Table name (e.g. public.orders)
+     * @param shardColumn Column used for hashing (e.g. id, created_date)
+     * @param dataSource Used to resolve partition column type when partition filter is applied
+     * @param config May contain partitionValue or partitionStartValue/partitionEndValue for WHERE filter
+     * @return SQL SELECT with WHERE (hash % ?) = ? and optional AND partition_filter
      */
     private String buildHashBasedQuery(String tableName, String shardColumn, DataSource dataSource, PipelineConfigSource config) {
+        return buildHashBasedQuery(tableName, shardColumn, dataSource, config, null);
+    }
+
+    private String buildHashBasedQuery(String tableName, String shardColumn, DataSource dataSource, PipelineConfigSource config, String partitionFilterColumn) {
         // Validate column name to prevent SQL injection
         InputValidator.validateColumnName(shardColumn);
         
-        // Build partition value filter if specified
-        String partitionFilter = buildPartitionFilter(dataSource, config);
+        // Build partition value filter if specified (use partitionFilterColumn when auto-detected and partitionValue set)
+        String partitionFilter = buildPartitionFilter(dataSource, config, partitionFilterColumn);
         
         // PostgreSQL hash-based sharding query
         // Uses MD5 hash converted to bigint for better distribution across all data types
@@ -804,24 +842,27 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     }
     
     /**
-     * Builds a hash-based sharding query using multiple columns.
-     * Concatenates column values and hashes the result for deterministic shard assignment.
-     * This provides better distribution when multiple non-null columns are available.
-     * 
-     * @param tableName Table name (may include schema)
-     * @param shardColumns List of column names to use for sharding (2 or 3 columns)
-     * @param dataSource DataSource for database connection (for partition value filtering)
-     * @param config Pipeline configuration (for partition value filtering)
-     * @return SQL query with hash-based WHERE clause (and partition value filter if specified)
+     * Builds a hash-based sharding query using 2 or 3 columns (no PK/index case).
+     * Hashes concat(col1, '|', col2, ...) for shard assignment. Example: columns [a, b] → hash(a||'|'||b) % ? = ?.
+     *
+     * @param tableName Table name (e.g. public.events)
+     * @param shardColumns Typically 2–3 non-null columns from first columns (no PK/index)
+     * @param dataSource For partition filter column type resolution
+     * @param config Optional partition single value or range
+     * @return SQL SELECT with WHERE (hash on concatenated columns % ?) = ? and optional partition filter
      */
     private String buildMultiColumnHashBasedQuery(String tableName, List<String> shardColumns, DataSource dataSource, PipelineConfigSource config) {
+        return buildMultiColumnHashBasedQuery(tableName, shardColumns, dataSource, config, null);
+    }
+
+    private String buildMultiColumnHashBasedQuery(String tableName, List<String> shardColumns, DataSource dataSource, PipelineConfigSource config, String partitionFilterColumn) {
         // Validate all column names to prevent SQL injection
         for (String column : shardColumns) {
             InputValidator.validateColumnName(column);
         }
         
-        // Build partition value filter if specified
-        String partitionFilter = buildPartitionFilter(dataSource, config);
+        // Build partition value filter if specified (use partitionFilterColumn when auto-detected and partitionValue set)
+        String partitionFilter = buildPartitionFilter(dataSource, config, partitionFilterColumn);
         
         // Concatenate columns with a delimiter for hashing
         // Use COALESCE to handle NULLs (treat as empty string)
@@ -1115,63 +1156,96 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
     }
     
     /**
-     * Builds a generic partition value filter clause for WHERE conditions.
-     * Filters data by a specific partition value when partitionValue and upperBoundColumn are provided.
-     * Auto-detects column data type and formats the value appropriately (date, integer, string, etc.).
-     * 
-     * @param dataSource DataSource for database connection (to detect column type)
-     * @param config Pipeline configuration
-     * @return SQL WHERE clause fragment for partition value filtering, or null if not applicable
+     * Builds partition filter for WHERE clause. Delegates to overload with no column override.
      */
     private String buildPartitionFilter(DataSource dataSource, PipelineConfigSource config) {
+        return buildPartitionFilter(dataSource, config, null);
+    }
+
+    /**
+     * Builds a partition filter fragment for WHERE conditions (single value or range).
+     *
+     * <p><b>Single partition value</b> – load one partition only:
+     * <ul>
+     *   <li>Config: partitionValue: "2024-01-15", upperBoundColumn: created_date (or auto-detected partition column)</li>
+     *   <li>Result: {@code created_date = DATE '2024-01-15'}</li>
+     * </ul>
+     *
+     * <p><b>Partition range</b> – load a date/numeric range:
+     * <ul>
+     *   <li>Config: partitionStartValue: "2024-01-01", partitionEndValue: "2024-01-31", upperBoundColumn: created_date</li>
+     *   <li>Result: {@code created_date >= DATE '2024-01-01' AND created_date <= DATE '2024-01-31'}</li>
+     * </ul>
+     *
+     * <p>Partition column is taken from config (upperBoundColumn) or from overridePartitionColumn when we
+     * auto-detected the shard column (e.g. partition key) and user did not set upperBoundColumn.
+     * Column type is detected from the schema and values are formatted (date, timestamp, integer, string).
+     *
+     * @param dataSource DataSource for database connection (to detect column type)
+     * @param config Pipeline configuration (partitionValue, partitionStartValue, partitionEndValue, upperBoundColumn)
+     * @param overridePartitionColumn When non-null, use this as partition column (e.g. auto-detected partition key)
+     * @return SQL WHERE clause fragment (e.g. "col = value" or "col >= x AND col <= y"), or null if no filter
+     */
+    private String buildPartitionFilter(DataSource dataSource, PipelineConfigSource config, String overridePartitionColumn) {
         String partitionValue = config.getPartitionValue();
-        String partitionColumn = config.getUpperBoundColumn();
-        
-        // Both partitionValue and upperBoundColumn must be provided for partition filtering
-        // partitionValue is optional - if not provided, return null (no filter applied)
-        if (partitionValue == null || partitionValue.isBlank()) {
-            log.debug("partitionValue not provided - skipping partition value filter. " +
-                    "This is optional and will not affect data loading. " +
-                    "All data from the table will be processed.");
+        String partitionStartValue = config.getPartitionStartValue();
+        String partitionEndValue = config.getPartitionEndValue();
+        boolean hasRange = partitionStartValue != null && !partitionStartValue.isBlank()
+                && partitionEndValue != null && !partitionEndValue.isBlank();
+        boolean hasSingle = partitionValue != null && !partitionValue.isBlank();
+
+        if (!hasSingle && !hasRange) {
+            log.debug("Partition filter not provided - skipping. All data from the table will be processed.");
             return null;
         }
-        
+
+        String partitionColumn = (overridePartitionColumn != null && !overridePartitionColumn.isBlank())
+                ? overridePartitionColumn
+                : config.getUpperBoundColumn();
+
         if (partitionColumn == null || partitionColumn.isBlank()) {
-            log.warn("partitionValue '{}' provided but upperBoundColumn is missing. " +
-                    "Partition value filtering requires both partitionValue and upperBoundColumn. " +
-                    "Skipping partition value filter.", partitionValue);
+            log.warn("Partition value/range provided but neither upperBoundColumn nor auto-detected partition column is available. " +
+                    "Skipping partition filter.");
             return null;
         }
-        
-        // Validate column name to prevent SQL injection
+
         InputValidator.validateColumnName(partitionColumn);
-        
-        // Detect column data type to format value appropriately
         String columnDataType = PostgresPartitionValueFormatter.getColumnDataType(dataSource, config, partitionColumn);
-        
+
+        if (hasRange) {
+            // Date (or numeric) range: column >= start AND column <= end
+            String formattedStart = columnDataType != null && !columnDataType.isBlank()
+                    ? PostgresPartitionValueFormatter.formatPartitionValueByType(partitionColumn, partitionStartValue, columnDataType)
+                    : null;
+            String formattedEnd = columnDataType != null && !columnDataType.isBlank()
+                    ? PostgresPartitionValueFormatter.formatPartitionValueByType(partitionColumn, partitionEndValue, columnDataType)
+                    : null;
+            if (formattedStart != null && formattedEnd != null) {
+                log.info("Applying partition range filter: {} >= {} AND {} <= {} (column type: '{}', range: '{}' to '{}')",
+                        partitionColumn, formattedStart, partitionColumn, formattedEnd, columnDataType, partitionStartValue, partitionEndValue);
+                return partitionColumn + " >= " + formattedStart + " AND " + partitionColumn + " <= " + formattedEnd;
+            }
+            // Fallback string range
+            String escStart = partitionStartValue.replace("'", "''");
+            String escEnd = partitionEndValue.replace("'", "''");
+            log.warn("Could not format partition range for column type '{}'. Using string format.", columnDataType);
+            return partitionColumn + " >= '" + escStart + "' AND " + partitionColumn + " <= '" + escEnd + "'";
+        }
+
+        // Single value: column = value
         if (columnDataType == null || columnDataType.isBlank()) {
-            log.warn("Could not detect data type for partition column '{}'. " +
-                    "Using string format for partition value filter. " +
-                    "If this causes issues, verify the column name is correct.", partitionColumn);
-            // Default to string format with proper escaping
-            String escapedValue = partitionValue.replace("'", "''"); // Escape single quotes
+            String escapedValue = partitionValue.replace("'", "''");
             log.info("Applying partition value filter: {} = '{}' (as string)", partitionColumn, partitionValue);
             return partitionColumn + " = '" + escapedValue + "'";
         }
-        
-        // Format value based on detected column data type
         String formattedFilter = PostgresPartitionValueFormatter.formatPartitionValueByType(partitionColumn, partitionValue, columnDataType);
-        
         if (formattedFilter != null) {
-            log.info("Applying partition value filter: {} = {} (column type: '{}', value: '{}')", 
+            log.info("Applying partition value filter: {} = {} (column type: '{}', value: '{}')",
                     partitionColumn, formattedFilter, columnDataType, partitionValue);
             return partitionColumn + " = " + formattedFilter;
         }
-        
-        // Fallback: treat as string if type detection/formatting fails
         String escapedValue = partitionValue.replace("'", "''");
-        log.warn("Could not format partition value '{}' for column type '{}'. Using string format as fallback.", 
-                partitionValue, columnDataType);
+        log.warn("Could not format partition value '{}' for column type '{}'. Using string format as fallback.", partitionValue, columnDataType);
         return partitionColumn + " = '" + escapedValue + "'";
     }
     
@@ -1179,30 +1253,37 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
 
     
     /**
-     * Calculates adaptive fetch size based on dataset size and shard count.
-     * For huge partition column datasets, uses larger fetch size to reduce round trips.
-     * 
-     * @param baseFetchSize Base fetch size from config
-     * @param rowCount Estimated row count
-     * @param shardCount Number of shards
-     * @return Adaptive fetch size
+     * Calculates adaptive fetch size from configurable thresholds (streamnova.adaptive-fetch).
+     * When row count exceeds a threshold, fetch size is increased to reduce round trips.
+     *
+     * <p>Large dataset: rowCount &gt; largeDatasetThresholdRows → min(largeDatasetMaxFetchSize, base * largeDatasetMultiplier).
+     * <p>Medium dataset: rowCount &gt; mediumDatasetThresholdRows → min(mediumDatasetMaxFetchSize, base * mediumDatasetMultiplier).
+     *
+     * @param baseFetchSize Base fetch size from pipeline config (or default 5000)
+     * @param rowCount Estimated table row count
+     * @param shardCount Number of shards (currently unused; reserved for future per-shard tuning)
+     * @return Fetch size to use for JDBC read
      */
     private int calculateAdaptiveFetchSize(int baseFetchSize, long rowCount, int shardCount) {
-        // For very large datasets (>10M rows), increase fetch size
-        if (rowCount > 10_000_000) {
-            // Use larger fetch size: min(50000, baseFetchSize * 10)
-            int adaptiveSize = Math.min(50000, baseFetchSize * 10);
-            log.info("Large dataset detected ({} rows). Using adaptive fetch size: {} (base: {})", 
-                    rowCount, adaptiveSize, baseFetchSize);
-            return adaptiveSize;
-        } else if (rowCount > 1_000_000) {
-            // For medium-large datasets, moderate increase
-            int adaptiveSize = Math.min(20000, baseFetchSize * 4);
-            log.debug("Medium-large dataset detected ({} rows). Using adaptive fetch size: {} (base: {})", 
-                    rowCount, adaptiveSize, baseFetchSize);
+        long largeThreshold = adaptiveFetchProperties.getLargeDatasetThresholdRows();
+        int largeMax = adaptiveFetchProperties.getLargeDatasetMaxFetchSize();
+        int largeMultiplier = adaptiveFetchProperties.getLargeDatasetMultiplier();
+        long mediumThreshold = adaptiveFetchProperties.getMediumDatasetThresholdRows();
+        int mediumMax = adaptiveFetchProperties.getMediumDatasetMaxFetchSize();
+        int mediumMultiplier = adaptiveFetchProperties.getMediumDatasetMultiplier();
+
+        if (rowCount > largeThreshold) {
+            int adaptiveSize = Math.min(largeMax, baseFetchSize * largeMultiplier);
+            log.info("Large dataset detected ({} rows > {}). Using adaptive fetch size: {} (base: {}, max: {}, multiplier: {})",
+                    rowCount, largeThreshold, adaptiveSize, baseFetchSize, largeMax, largeMultiplier);
             return adaptiveSize;
         }
-        // For smaller datasets, use base fetch size
+        if (rowCount > mediumThreshold) {
+            int adaptiveSize = Math.min(mediumMax, baseFetchSize * mediumMultiplier);
+            log.debug("Medium-large dataset detected ({} rows > {}). Using adaptive fetch size: {} (base: {}, max: {}, multiplier: {})",
+                    rowCount, mediumThreshold, adaptiveSize, baseFetchSize, mediumMax, mediumMultiplier);
+            return adaptiveSize;
+        }
         return baseFetchSize;
     }
     

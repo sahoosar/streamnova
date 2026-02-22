@@ -48,7 +48,9 @@ public class PipelineConfigSource {
 
     // ----- Table / sharding (optional) -----
     private String upperBoundColumn;   // Column for hash-based sharding or partition filter
-    private String partitionValue;     // Partition value to filter (date, id, string; use with upperBoundColumn)
+    private String partitionValue;     // Partition value to filter (single value: date, id, string; use with upperBoundColumn)
+    private String partitionStartValue; // Start of range (e.g. date); use with partitionEndValue and upperBoundColumn for date-range load
+    private String partitionEndValue;  // End of range (e.g. date); use with partitionStartValue and upperBoundColumn for date-range load
     private String shardColumn;        // Fallback shard column when no PK/partition
     private int maxColumns;
     private List<String> orderBy;

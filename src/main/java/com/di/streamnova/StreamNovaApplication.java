@@ -24,7 +24,8 @@ import com.di.streamnova.config.YamlPipelineProperties;
 @EnableConfigurationProperties({ YamlPipelineProperties.class, MachineLadderProperties.class,
         com.di.streamnova.agent.shardplanner.ShardPlannerProperties.class,
         com.di.streamnova.config.PipelineConfigFilesProperties.class,
-        com.di.streamnova.config.TemplateDefaultsProperties.class })
+        com.di.streamnova.config.TemplateDefaultsProperties.class,
+        com.di.streamnova.handler.jdbc.postgres.AdaptiveFetchProperties.class })
 public class StreamNovaApplication {
 
 	public static void main(String[] args) {

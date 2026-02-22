@@ -24,6 +24,10 @@ public class TableConfig {
     private String upperBoundColumn;
     /** Optional. Partition value to filter (e.g. date, id). Use with upperBoundColumn. */
     private String partitionValue;
+    /** Optional. Start of partition range (e.g. date). Use with partitionEndValue and upperBoundColumn for date-range load. */
+    private String partitionStartValue;
+    /** Optional. End of partition range (e.g. date). Use with partitionStartValue and upperBoundColumn. */
+    private String partitionEndValue;
     /** Optional. Fallback shard/ordering column when no PK or partition. */
     private String shardColumn;
     /** Optional. ORDER BY columns. Omit to use connection's value. */

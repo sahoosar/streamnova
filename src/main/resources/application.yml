@@ -146,6 +146,19 @@ streamnova:
     pool-headroom-ratio: 0.8                # Shard cap = pool-size × this (e.g. 80%)
 
   # --------------------------------------------------------------------------
+  # Adaptive fetch size (PostgresHandler: scale JDBC fetch size by table size)
+  # --------------------------------------------------------------------------
+  adaptive-fetch:
+    # Row count above which "large dataset" rules apply: fetchSize = min(large-max, base * large-multiplier)
+    large-dataset-threshold-rows: 10000000   # 10M
+    large-dataset-max-fetch-size: 50000
+    large-dataset-multiplier: 10
+    # Row count above which "medium dataset" rules apply (below large threshold)
+    medium-dataset-threshold-rows: 1000000  # 1M
+    medium-dataset-max-fetch-size: 20000
+    medium-dataset-multiplier: 4
+
+  # --------------------------------------------------------------------------
   # Profiler (table stats and warm-up)
   # --------------------------------------------------------------------------
   profiler:

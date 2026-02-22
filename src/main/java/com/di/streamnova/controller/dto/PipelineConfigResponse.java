@@ -21,6 +21,8 @@ public class PipelineConfigResponse {
     private Integer fetchSize;
     private String upperBoundColumn;
     private String partitionValue;
+    private String partitionStartValue;
+    private String partitionEndValue;
     private String shardColumn;
     private List<String> orderBy;
     private Integer maximumPoolSize;
@@ -49,6 +51,8 @@ public class PipelineConfigResponse {
                 .fetchSize(source.getFetchSize() > 0 ? source.getFetchSize() : null)
                 .upperBoundColumn(source.getUpperBoundColumn())
                 .partitionValue(source.getPartitionValue())
+                .partitionStartValue(source.getPartitionStartValue())
+                .partitionEndValue(source.getPartitionEndValue())
                 .shardColumn(source.getShardColumn())
                 .orderBy(source.getOrderBy())
                 .maximumPoolSize(source.getMaximumPoolSize() > 0 ? source.getMaximumPoolSize() : null)
