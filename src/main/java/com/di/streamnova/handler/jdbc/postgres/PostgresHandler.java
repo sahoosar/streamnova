@@ -32,6 +32,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.stream.IntStream;
 
 /**
@@ -138,10 +140,16 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                             IntStream.range(0, shardCount).boxed().toList()));
             
             // 8. Read data using ParDo with sharding and transaction isolation
+            // When maxConcurrentShards < shardCount, load runs in phases (shift-based); semaphore limits concurrent connections.
+            int maxConcurrent = (config.getMaxConcurrentShards() != null && config.getMaxConcurrentShards() > 0 && config.getMaxConcurrentShards() < shardCount)
+                    ? config.getMaxConcurrentShards() : 0;
+            if (maxConcurrent > 0) {
+                log.info("Shift-based load: {} partitions, max {} concurrent shards (80% pool headroom)", shardCount, maxConcurrent);
+            }
             PCollection<Row> rows = shards.apply("ReadFromPostgres", 
                     ParDo.of(new ReadShardDoFn(dbConfig, query, shardCount, fetchSize, schema, baseSchema, stats.rowCount(),
                             config.getQueryTimeout(), config.getSocketTimeout(), config.getStatementTimeout(), 
-                            config.getEnableProgressLogging())))
+                            config.getEnableProgressLogging(), maxConcurrent)))
                     .setRowSchema(schema);
             
             // Record metrics
@@ -1297,6 +1305,8 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
      * - Row count tracking per shard for validation
      */
     private static class ReadShardDoFn extends DoFn<Integer, Row> {
+        private static final ConcurrentHashMap<String, Semaphore> CONCURRENCY_SEMAPHORES = new ConcurrentHashMap<>();
+
         private final DbConfigSnapshot dbConfig;
         private final String query;
         private final int shardCount;
@@ -1308,14 +1318,17 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
         private final Integer socketTimeout; // Socket timeout in seconds
         private final Integer statementTimeout; // Statement timeout in seconds (PostgreSQL)
         private final Boolean enableProgressLogging; // Enable progress logging
-        
+        /** When > 0, max concurrent DB connections (shift-based load). 0 = no limit. */
+        private final int maxConcurrentShards;
+
         // Transient fields that will be initialized in @Setup
         private transient DataSource dataSource;
         private transient org.slf4j.Logger logger;
         
-        ReadShardDoFn(DbConfigSnapshot dbConfig, String query, int shardCount, int fetchSize, 
+        ReadShardDoFn(DbConfigSnapshot dbConfig, String query, int shardCount, int fetchSize,
                      Schema schema, Schema baseSchema, long expectedRowCount,
-                     Integer queryTimeout, Integer socketTimeout, Integer statementTimeout, Boolean enableProgressLogging) {
+                     Integer queryTimeout, Integer socketTimeout, Integer statementTimeout, Boolean enableProgressLogging,
+                     int maxConcurrentShards) {
             this.dbConfig = dbConfig;
             this.query = query;
             this.shardCount = shardCount;
@@ -1327,6 +1340,7 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
             this.socketTimeout = socketTimeout;
             this.statementTimeout = statementTimeout;
             this.enableProgressLogging = enableProgressLogging != null ? enableProgressLogging : true;
+            this.maxConcurrentShards = maxConcurrentShards <= 0 ? 0 : maxConcurrentShards;
         }
         
         @Setup
@@ -1347,6 +1361,12 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
          */
         @ProcessElement
         public void processElement(@Element Integer shardId, OutputReceiver<Row> out) {
+            Semaphore semaphore = null;
+            if (maxConcurrentShards > 0) {
+                String key = dbConfig.jdbcUrl() + "_" + maxConcurrentShards;
+                semaphore = CONCURRENCY_SEMAPHORES.computeIfAbsent(key, k -> new Semaphore(maxConcurrentShards));
+                semaphore.acquireUninterruptibly();
+            }
             Connection conn = null;
             try {
                 conn = dataSource.getConnection();
@@ -1433,6 +1453,9 @@ public class PostgresHandler implements SourceHandler<PipelineConfigSource> {
                 logger.error("Database error while reading shard {}", shardId, e);
                 throw new RuntimeException("Failed to read shard " + shardId + ": " + e.getMessage(), e);
             } finally {
+                if (semaphore != null) {
+                    semaphore.release();
+                }
                 // Ensure connection is closed
                 if (conn != null) {
                     try {

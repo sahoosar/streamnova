@@ -1,6 +1,7 @@
 package com.di.streamnova.exception;
 
 import com.di.streamnova.aspect.ErrorCategory;
+import com.di.streamnova.guardrail.GuardrailViolationException;
 import com.di.streamnova.util.TransactionEventLogger;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -91,6 +92,20 @@ public class GlobalExceptionHandler {
         ErrorCategory category = ErrorCategory.categorize(e);
         logError("STATISTICS_EXCEPTION", category, e);
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(buildErrorResponse(category, e, HttpStatus.BAD_GATEWAY));
+    }
+
+    /**
+     * Handles guardrail policy violations (machine type, cost, duration, throughput limits).
+     * Returns 400 Bad Request with the violation message.
+     */
+    @ExceptionHandler(GuardrailViolationException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ResponseEntity<ErrorResponse> handleGuardrailViolation(GuardrailViolationException e) {
+        ErrorCategory category = ErrorCategory.categorize(e);
+        logError("GUARDRAIL_VIOLATION", category, e);
+        ErrorResponse resp = buildErrorResponse(category, e, HttpStatus.BAD_REQUEST);
+        resp.addDetail("violationType", "GUARDRAIL");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(resp);
     }
 
     /**

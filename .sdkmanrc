@@ -1,0 +1,4 @@
+# Use OpenJDK 21 LTS (Eclipse Temurin).
+# Run: sdk env   (install with: sdk install java 21-tem)
+# Then: mvn compile
+java=21-tem

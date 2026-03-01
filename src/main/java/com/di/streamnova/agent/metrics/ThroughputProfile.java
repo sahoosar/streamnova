@@ -25,4 +25,14 @@ public class ThroughputProfile {
     public Instant getSampledAt() {
         return sampledAt != null ? sampledAt : Instant.now();
     }
+
+    /** Duration in seconds (for AI anomaly reporting). */
+    public double getDurationSec() {
+        return durationMs > 0 ? durationMs / 1000.0 : 0.0;
+    }
+
+    /** Cost in USD (placeholder; actual cost from EstimateVsActual when available). */
+    public double getCostUsd() {
+        return 0.0;
+    }
 }

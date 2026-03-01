@@ -54,6 +54,16 @@ public class ExecuteRequest {
     @JsonAlias("watermark_to")
     private String watermarkTo;
 
+    /**
+     * When true, this run reserves the full connection pool (no other run can start until this one finishes).
+     * When false, run shares the pool; limited by max-concurrent-runs guardrail.
+     */
+    private Boolean exclusive;
+
+    /** Optional caller/agent id for audit; when set, list audit via GET /api/agent/audit?callerAgentId=... */
+    @JsonAlias("caller_agent_id")
+    private String callerAgentId;
+
     @Data
     @NoArgsConstructor
     public static class CandidateBody {
@@ -63,6 +73,10 @@ public class ExecuteRequest {
         private Integer workerCount;
         @JsonAlias("shard_count")
         private Integer shardCount;
+        @JsonAlias("partition_count")
+        private Integer partitionCount;
+        @JsonAlias("max_concurrent_shards")
+        private Integer maxConcurrentShards;
         @JsonAlias("virtual_cpus")
         private Integer virtualCpus;
         @JsonAlias("suggested_pool_size")

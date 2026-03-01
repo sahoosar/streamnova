@@ -1,7 +1,10 @@
 package com.di.streamnova.agent.estimator;
 
 import com.di.streamnova.agent.execution_planner.ExecutionPlanOption;
+import com.di.streamnova.agent.execution_planner.MachineLadder;
 import com.di.streamnova.agent.metrics.LearningSignals;
+import com.di.streamnova.agent.shardplanner.PoolSizeCalculator;
+import com.di.streamnova.config.TableConfig;
 import com.di.streamnova.agent.metrics.MetricsLearningService;
 import com.di.streamnova.agent.metrics.ThroughputProfile;
 import com.di.streamnova.agent.profiler.TableProfile;
@@ -81,6 +84,40 @@ public class EstimatorService {
     private static List<String> parseMachineFamilyPrefixes(String config) {
         if (config == null || config.isBlank()) return List.of("n2d", "n2", "c3");
         return Arrays.stream(config.split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList());
+    }
+
+    /**
+     * Builds a table profile and default candidates from table config, then estimates (for AI RecommendationTool).
+     */
+    public List<EstimatedCandidate> estimateCandidates(TableConfig tableConfig, String sourceType, String targetType) {
+        long rowCount = tableConfig.getEstimatedRows() != null ? tableConfig.getEstimatedRows() : 0L;
+        double sizeMb = tableConfig.getEstimatedSizeMb() != null ? tableConfig.getEstimatedSizeMb() : 0.0;
+        int avgRowBytes = (rowCount > 0 && sizeMb > 0)
+                ? (int) ((sizeMb * 1024 * 1024) / rowCount)
+                : 512;
+        String schema = tableConfig.getSchema() != null ? tableConfig.getSchema() : "public";
+        String tableName = tableConfig.getTableName() != null ? tableConfig.getTableName() : "table";
+        TableProfile profile = TableProfile.from(
+                rowCount, avgRowBytes,
+                sourceType != null ? sourceType : "postgres",
+                schema, tableName);
+        List<ExecutionPlanOption> candidates = List.of(
+                buildOption("n2-standard-4", 2, 4),
+                buildOption("n2-standard-8", 2, 8),
+                buildOption("n2d-standard-4", 2, 4));
+        return estimate(profile, candidates, null);
+    }
+
+    private static ExecutionPlanOption buildOption(String machineType, int workers, int shards) {
+        int vcpus = MachineLadder.extractVcpus(machineType);
+        int poolSize = PoolSizeCalculator.calculateFromMachineType(machineType, 10);
+        return ExecutionPlanOption.builder()
+                .machineType(machineType)
+                .workerCount(workers)
+                .shardCount(shards)
+                .virtualCpus(vcpus > 0 ? vcpus : 4)
+                .suggestedPoolSize(poolSize)
+                .build();
     }
 
     /**

@@ -18,3 +18,35 @@ pipeline:
       username: ${ORACLE_SIT_USERNAME:sit_user}
       password: ${ORACLE_SIT_PASSWORD:}
       table: ${ORACLE_SIT_TABLE:schema.some_table}
+
+# ── Spring AI / Vertex AI (Oracle SIT) ───────────────────────────
+spring:
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: ${VERTEX_PROJECT_ID:streamnova-sit}
+          location:   ${VERTEX_LOCATION:us-central1}
+          chat:
+            options:
+              model:        gemini-2.0-flash-001
+              temperature:  0.4
+
+streamnova:
+  ai:
+    enabled: true
+    vertex:
+      project-id: ${VERTEX_PROJECT_ID:streamnova-sit}
+
+# ── Guardrails (Oracle SIT) ──────────────────────────────────────────────────
+streamnova:
+  guardrails:
+    allowed-machine-types: n2d-standard-4,n2d-standard-8,n2-standard-4,n2-standard-8
+    machine-family-order: n2d,n2,c3
+    max-cost-usd:
+    max-duration-sec: 14400
+    min-throughput-mb-per-sec:
+    max-workers-global: 4
+    max-shards-global: 16
+    enforce-on-recommend: true
+    enforce-on-execute: true

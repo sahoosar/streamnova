@@ -1,5 +1,6 @@
 package com.di.streamnova.agent.metrics;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -12,9 +13,10 @@ import java.util.stream.Collectors;
 
 /**
  * In-memory implementation of MetricsLearningStore. Suitable for single-node and testing.
- * For production, implement MetricsLearningStore with JDBC using AGENT_TABLES_SCHEMA.sql.
+ * When streamnova.metrics.persistence-enabled=true, JdbcMetricsLearningStore is used instead.
  */
 @Component
+@ConditionalOnProperty(name = "streamnova.metrics.persistence-enabled", havingValue = "false", matchIfMissing = true)
 public class InMemoryMetricsLearningStore implements MetricsLearningStore {
 
     private final Map<String, EstimateVsActual> estimatesByRunId = new ConcurrentHashMap<>();
@@ -112,6 +114,7 @@ public class InMemoryMetricsLearningStore implements MetricsLearningStore {
                 .createdAt(existing.getCreatedAt())
                 .jobId(jobId != null ? jobId : existing.getJobId())
                 .message(message != null ? message : existing.getMessage())
+                .callerAgentId(existing.getCallerAgentId())
                 .build();
         executionByRunId.put(runId, updated);
     }
@@ -140,6 +143,18 @@ public class InMemoryMetricsLearningStore implements MetricsLearningStore {
     public List<ExecutionStatus> findExecutionStatusesByStatus(String status, int limit) {
         return executionByRunId.values().stream()
                 .filter(s -> status.equals(s.getStatus()))
+                .sorted(Comparator.comparing(ExecutionStatus::getCreatedAt).reversed())
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ExecutionStatus> findExecutionStatusesByCallerAgentId(String callerAgentId, int limit) {
+        if (callerAgentId == null || callerAgentId.isBlank()) {
+            return findRecentExecutionStatuses(limit);
+        }
+        return executionByRunId.values().stream()
+                .filter(s -> callerAgentId.equals(s.getCallerAgentId()))
                 .sorted(Comparator.comparing(ExecutionStatus::getCreatedAt).reversed())
                 .limit(limit)
                 .collect(Collectors.toList());

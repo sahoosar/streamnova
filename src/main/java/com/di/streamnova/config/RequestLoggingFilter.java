@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 1)
 public class RequestLoggingFilter extends OncePerRequestFilter {
 
     @Value("${streamnova.request-logging.enabled:true}")
@@ -55,13 +55,40 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
             return;
         }
-        ContentCachingRequestWrapper wrappedRequest = new ContentCachingRequestWrapper(request);
+        ContentCachingRequestWrapper wrappedRequest = new ContentCachingRequestWrapper(request, 65536);
         ContentCachingResponseWrapper wrappedResponse = new ContentCachingResponseWrapper(response);
         try {
             filterChain.doFilter(wrappedRequest, wrappedResponse);
         } finally {
             logRequest(wrappedRequest);
+            logResponse(wrappedRequest, wrappedResponse);
             wrappedResponse.copyBodyToResponse();
+        }
+    }
+
+    /** Paths under which we log response body (agent endpoints) for request/response tracking. */
+    private static boolean isAgentPath(String uri) {
+        return uri != null && (uri.contains("/api/agent/webhook") || uri.contains("/api/agent/executions"));
+    }
+
+    private void logResponse(ContentCachingRequestWrapper request, ContentCachingResponseWrapper response) {
+        try {
+            int status = response.getStatus();
+            String uri = request.getRequestURI();
+            log.info("[RESPONSE] status={} path={}", status, uri);
+            if (isAgentPath(uri)) {
+                byte[] buf = response.getContentAsByteArray();
+                if (buf != null && buf.length > 0) {
+                    String body = new String(buf, StandardCharsets.UTF_8);
+                    body = redactPasswordsFromBody(body);
+                    if (body.length() > maxBodyLength) {
+                        body = body.substring(0, maxBodyLength) + "... [truncated, total " + buf.length + " bytes]";
+                    }
+                    log.info("[RESPONSE] Body (path={}): {}", uri, body);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[RESPONSE] Could not log response: {}", e.getMessage());
         }
     }
 

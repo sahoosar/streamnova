@@ -30,6 +30,8 @@ public class ExecutionStatus {
     Instant createdAt;
     String jobId;
     String message;
+    /** Optional: id of the external agent that triggered this run (e.g. agent-1, agent-2). For tracking when multiple agents call the webhook. */
+    String callerAgentId;
 
     public Instant getCreatedAt() {
         return createdAt != null ? createdAt : Instant.now();

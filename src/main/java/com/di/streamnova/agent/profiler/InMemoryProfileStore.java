@@ -1,5 +1,6 @@
 package com.di.streamnova.agent.profiler;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -11,10 +12,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * In-memory implementation of {@link ProfileStore}. Suitable for single-node and testing.
- * For production persistence and cross-run learning, use a JDBC or file-based store and the
- * schema defined in agent/profiler/AGENT_TABLES_SCHEMA.sql.
+ * When {@code streamnova.metrics.persistence-enabled=true}, {@link JdbcProfileStore} is used instead.
  */
 @Component
+@ConditionalOnProperty(name = "streamnova.metrics.persistence-enabled", havingValue = "false", matchIfMissing = true)
 public class InMemoryProfileStore implements ProfileStore {
 
     private final Map<String, ProfileResult> byRunId = new ConcurrentHashMap<>();

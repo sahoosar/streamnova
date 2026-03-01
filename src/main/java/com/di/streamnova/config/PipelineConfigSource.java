@@ -71,6 +71,8 @@ public class PipelineConfigSource {
     // ----- Behaviour and overrides -----
     private Boolean enableProgressLogging;
     private Integer shards;
+    /** When set and less than shards, limits concurrent DB connections (shift-based / phased load). */
+    private Integer maxConcurrentShards;
     private Integer workers;
     private String machineType;
 

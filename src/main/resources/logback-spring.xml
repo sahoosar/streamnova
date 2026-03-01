@@ -7,7 +7,7 @@
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <!-- Include %ex on next line so stack traces are attached to the log line that triggered them -->
-            <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%t] [app=%property{appName}] %logger{36} - %msg%n%ex</pattern>
+            <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%t] [app=%property{appName}] [%X{requestId:-}] [%X{txId:-}] [%X{caller_agent_id:-}] [%X{execution_run_id:-}] [%X{jobId:-}] %logger{36} - %msg%n%ex</pattern>
         </encoder>
         <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
             <evaluator>
@@ -30,7 +30,7 @@
             <maxHistory>7</maxHistory>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [app=%property{appName}] %logger{36} - %msg%n%ex</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [app=%property{appName}] [%X{requestId:-}] [%X{txId:-}] [%X{caller_agent_id:-}] [%X{execution_run_id:-}] [%X{jobId:-}] %logger{36} - %msg%n%ex</pattern>
             <charset>UTF-8</charset>
         </encoder>
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
@@ -46,7 +46,7 @@
             <maxHistory>7</maxHistory>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [app=%property{appName}] %logger{36} - %msg%n%ex</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [app=%property{appName}] [%X{requestId:-}] [%X{txId:-}] [%X{caller_agent_id:-}] [%X{execution_run_id:-}] [%X{jobId:-}] %logger{36} - %msg%n%ex</pattern>
             <charset>UTF-8</charset>
         </encoder>
     </appender>

@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -99,6 +100,26 @@ public class ProfilerService {
 
         profileStore.save(result);
         return result;
+    }
+
+    /**
+     * Returns the latest cached table profile for the given source and table (from store).
+     */
+    public TableProfile getCachedProfile(String sourceType, String tableName) {
+        if (sourceType == null || tableName == null) return null;
+        String schema = "public";
+        List<ProfileResult> recent = profileStore.findRecentByTable(sourceType, schema, tableName, 1);
+        if (recent == null || recent.isEmpty()) return null;
+        return recent.get(0).getTableProfile();
+    }
+
+    /**
+     * Profiles the default source for the given type and returns its table profile.
+     * Used by AI ProfilerTool when schema/table are provided for display; actual profile uses default source config.
+     */
+    public TableProfile profileTable(String sourceType, String schema, String tableName) {
+        ProfileResult result = profile(sourceType != null ? sourceType : null, true);
+        return result != null ? result.getTableProfile() : null;
     }
 
     private PostgresStatisticsEstimator.TableStatistics estimateStatistics(com.di.streamnova.config.PipelineConfigSource config) {

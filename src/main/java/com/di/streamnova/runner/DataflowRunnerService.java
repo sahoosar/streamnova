@@ -198,11 +198,12 @@ public class DataflowRunnerService {
             // Pipeline config (YAML) is used only for connection, table, and other read settings (jdbcUrl, table, credentials, fetchSize, etc.).
             overriddenSource.setMachineType(candidate.getMachineType());
             overriddenSource.setWorkers(candidate.getWorkerCount());
-            overriddenSource.setShards(candidate.getShardCount());
+            overriddenSource.setShards(candidate.getEffectivePartitionCount());
+            overriddenSource.setMaxConcurrentShards(candidate.getEffectiveMaxConcurrentShards() < candidate.getEffectivePartitionCount() ? candidate.getEffectiveMaxConcurrentShards() : null);
             overriddenSource.setMaximumPoolSize(candidate.getSuggestedPoolSize() > 0 ? candidate.getSuggestedPoolSize() : baseSource.getMaximumPoolSize());
-            log.info("[RUNNER] Using candidate for execution plan: machineType={}, workers={}, shards={}, poolSize={}; connection/table from pipeline config",
-                    candidate.getMachineType(), candidate.getWorkerCount(), candidate.getShardCount(),
-                    candidate.getSuggestedPoolSize() > 0 ? candidate.getSuggestedPoolSize() : baseSource.getMaximumPoolSize());
+            log.info("[RUNNER] Using candidate for execution plan: machineType={}, workers={}, partitions={}, maxConcurrent={}, poolSize={}; connection/table from pipeline config",
+                    candidate.getMachineType(), candidate.getWorkerCount(), candidate.getEffectivePartitionCount(), candidate.getEffectiveMaxConcurrentShards(),
+                    overriddenSource.getMaximumPoolSize());
 
             LoadConfig overriddenConfig = new LoadConfig();
             overriddenConfig.setSource(overriddenSource);

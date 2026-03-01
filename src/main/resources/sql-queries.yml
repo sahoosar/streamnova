@@ -1,0 +1,78 @@
+# SQL queries used by JDBC stores. No queries are hardcoded in Java.
+# Override per environment in application-{profile}.yml if needed.
+streamnova:
+  sql:
+    audit:
+      insert: >
+        INSERT INTO agent_invocation_audit (caller_agent_id, run_id, endpoint, request_summary, response_status, response_summary, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      findRecentByCaller: >
+        SELECT id, caller_agent_id, run_id, endpoint, request_summary, response_status, response_summary, created_at
+        FROM agent_invocation_audit WHERE caller_agent_id = ? ORDER BY created_at DESC LIMIT ?
+
+    profile:
+      insertRunMeta: >
+        INSERT INTO profile_run_meta (run_id, completed_at, error_message, source_type, schema_name, table_name)
+        VALUES (?, ?, ?, ?, ?, ?)
+      insertTableProfile: >
+        INSERT INTO agent_table_profiles (run_id, source_type, schema_name, table_name, row_count_estimate, avg_row_size_bytes, estimated_total_bytes, complexity, profiled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      insertThroughput: >
+        INSERT INTO agent_throughput_discovery (run_id, source_type, schema_name, table_name, bytes_read, duration_ms, rows_read, throughput_mb_per_sec, sampled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      findRunMetaByRunId: >
+        SELECT run_id, completed_at, error_message, source_type, schema_name, table_name FROM profile_run_meta WHERE run_id = ?
+      findTableProfileByRunId: >
+        SELECT run_id, source_type, schema_name, table_name, row_count_estimate, avg_row_size_bytes, estimated_total_bytes, complexity, profiled_at
+        FROM agent_table_profiles WHERE run_id = ?
+      findThroughputByRunId: >
+        SELECT run_id, source_type, schema_name, table_name, bytes_read, duration_ms, rows_read, throughput_mb_per_sec, sampled_at
+        FROM agent_throughput_discovery WHERE run_id = ?
+      findRunIdsByTable: >
+        SELECT run_id FROM profile_run_meta WHERE source_type = ? AND schema_name = ? AND table_name = ? ORDER BY completed_at DESC LIMIT ?
+
+    metrics:
+      insertExecutionStatus: >
+        INSERT INTO agent_runs (run_id, profile_run_id, mode, load_pattern, source_type, schema_name, table_name, status, started_at, finished_at, created_at, job_id, message, caller_agent_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (run_id) DO UPDATE SET status = EXCLUDED.status, started_at = EXCLUDED.started_at, created_at = EXCLUDED.created_at, caller_agent_id = EXCLUDED.caller_agent_id
+      updateExecutionStatus: >
+        UPDATE agent_runs SET status = COALESCE(?, status), finished_at = COALESCE(?, finished_at), job_id = COALESCE(?, job_id), message = COALESCE(?, message) WHERE run_id = ?
+      findExecutionByRunId: >
+        SELECT run_id, profile_run_id, mode, load_pattern, source_type, schema_name, table_name, status, started_at, finished_at, created_at, job_id, message, caller_agent_id
+        FROM agent_runs WHERE run_id = ?
+      findRecentExecutions: >
+        SELECT run_id, profile_run_id, mode, load_pattern, source_type, schema_name, table_name, status, started_at, finished_at, created_at, job_id, message, caller_agent_id
+        FROM agent_runs ORDER BY created_at DESC LIMIT ?
+      findExecutionsByStatus: >
+        SELECT run_id, profile_run_id, mode, load_pattern, source_type, schema_name, table_name, status, started_at, finished_at, created_at, job_id, message, caller_agent_id
+        FROM agent_runs WHERE status = ? ORDER BY created_at DESC LIMIT ?
+      findExecutionsByCallerAgentId: >
+        SELECT run_id, profile_run_id, mode, load_pattern, source_type, schema_name, table_name, status, started_at, finished_at, created_at, job_id, message, caller_agent_id
+        FROM agent_runs WHERE caller_agent_id = ? ORDER BY created_at DESC LIMIT ?
+      insertEstimateVsActual: >
+        INSERT INTO agent_estimates_vs_actuals (run_id, estimated_duration_sec, actual_duration_sec, estimated_cost_usd, actual_cost_usd, machine_type, worker_count, shard_count, recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      findEstimatesVsActualsByRunId: >
+        SELECT run_id, estimated_duration_sec, actual_duration_sec, estimated_cost_usd, actual_cost_usd, machine_type, worker_count, shard_count, recorded_at
+        FROM agent_estimates_vs_actuals WHERE run_id = ? ORDER BY recorded_at DESC
+      estimatesVsActualsBase: >
+        SELECT e.run_id, e.estimated_duration_sec, e.actual_duration_sec, e.estimated_cost_usd, e.actual_cost_usd, e.machine_type, e.worker_count, e.shard_count, e.recorded_at
+        FROM agent_estimates_vs_actuals e JOIN agent_runs r ON e.run_id = r.run_id WHERE 1=1
+      estimatesVsActualsFilterSource: "AND r.source_type = ? "
+      estimatesVsActualsFilterSchema: "AND r.schema_name = ? "
+      estimatesVsActualsFilterTable: "AND r.table_name = ? "
+      estimatesVsActualsOrderLimit: "ORDER BY e.recorded_at DESC LIMIT ?"
+      insertThroughputProfile: >
+        INSERT INTO agent_throughput_discovery (run_id, source_type, schema_name, table_name, bytes_read, duration_ms, rows_read, throughput_mb_per_sec, sampled_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (run_id) DO NOTHING
+      findThroughputByRunId: >
+        SELECT run_id, source_type, schema_name, table_name, bytes_read, duration_ms, rows_read, throughput_mb_per_sec, sampled_at
+        FROM agent_throughput_discovery WHERE run_id = ?
+      throughputBase: >
+        SELECT run_id, source_type, schema_name, table_name, bytes_read, duration_ms, rows_read, throughput_mb_per_sec, sampled_at
+        FROM agent_throughput_discovery WHERE 1=1
+      throughputFilterSource: "AND source_type = ? "
+      throughputFilterSchema: "AND schema_name = ? "
+      throughputFilterTable: "AND table_name = ? "
+      throughputOrderLimit: "ORDER BY sampled_at DESC LIMIT ?"
