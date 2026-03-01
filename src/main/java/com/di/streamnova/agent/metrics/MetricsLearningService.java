@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -76,6 +77,15 @@ public class MetricsLearningService {
     }
 
     /**
+     * Returns recent throughput profiles for the given machine type (for AI anomaly detection).
+     * ThroughputProfile does not store machineType; returns empty until table-scoped history is available.
+     */
+    public List<ThroughputProfile> getThroughputHistory(String machineType, int limit) {
+        if (machineType == null || limit <= 0) return List.of();
+        return List.of();
+    }
+
+    /**
      * Returns recent estimate-vs-actual records that have actual duration (successful runs),
      * for duration estimate messaging.
      */
@@ -112,6 +122,14 @@ public class MetricsLearningService {
      */
     public void recordRunStarted(String executionRunId, String profileRunId, String mode, String loadPattern,
                                  String sourceType, String schemaName, String tableName) {
+        recordRunStarted(executionRunId, profileRunId, mode, loadPattern, sourceType, schemaName, tableName, null);
+    }
+
+    /**
+     * Records that an execution run has started, with optional caller agent id for multi-agent tracking.
+     */
+    public void recordRunStarted(String executionRunId, String profileRunId, String mode, String loadPattern,
+                                 String sourceType, String schemaName, String tableName, String callerAgentId) {
         if (executionRunId == null) return;
         Instant now = Instant.now();
         ExecutionStatus status = ExecutionStatus.builder()
@@ -128,6 +146,7 @@ public class MetricsLearningService {
                 .createdAt(now)
                 .jobId(null)
                 .message(null)
+                .callerAgentId(callerAgentId != null && !callerAgentId.isBlank() ? callerAgentId.trim() : null)
                 .build();
         store.saveExecutionStatus(status);
     }
@@ -137,6 +156,21 @@ public class MetricsLearningService {
      */
     public List<ThroughputProfile> getThroughputProfiles(String sourceType, String schemaName, String tableName, int limit) {
         return store.findRecentThroughputProfiles(sourceType, schemaName, tableName, limit);
+    }
+
+    /**
+     * Returns execution statuses for tracking: optionally filter by caller agent id (e.g. agent-1).
+     * When callerAgentId is null or blank, returns recent runs across all callers.
+     */
+    public List<ExecutionStatus> getExecutionStatusesByCallerAgentId(String callerAgentId, int limit) {
+        return store.findExecutionStatusesByCallerAgentId(callerAgentId, limit > 0 ? limit : 100);
+    }
+
+    /**
+     * Returns the execution status for a single run (e.g. after trigger, poll by executionRunId to see SUCCESS/FAILED).
+     */
+    public Optional<ExecutionStatus> getExecutionStatus(String runId) {
+        return runId != null && !runId.isBlank() ? store.findExecutionStatusByRunId(runId.trim()) : Optional.empty();
     }
 
     private static String machineFamily(String machineType) {

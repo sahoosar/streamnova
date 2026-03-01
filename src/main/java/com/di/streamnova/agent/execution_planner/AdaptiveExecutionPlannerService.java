@@ -109,19 +109,23 @@ public class AdaptiveExecutionPlannerService {
                 List<Integer> workerCounts = WorkerScaling.getReducedWorkerCandidates(effectiveMaxWorkers);
                 for (int workers : workerCounts) {
                     if (candidates.size() >= cap) break;
-                    int shards = shardPlanner.suggestShardCountForCandidate(
+                    com.di.streamnova.agent.shardplanner.ShardPlan plan = shardPlanner.suggestShardPlanWithConcurrency(
                             machineType, workers,
                             tableProfile.getRowCountEstimate(), tableProfile.getAvgRowSizeBytes(),
                             databasePoolMaxSize);
+                    int partitionCount = plan.getPartitionCount();
+                    int maxConcurrent = plan.getMaxConcurrentShards();
                     int poolSize = PoolSizeCalculator.calculateFromMachineType(machineType, fallbackPoolSize);
-                    poolSize = Math.max(poolSize, Math.min(shards, 100));
+                    poolSize = Math.max(poolSize, Math.min(maxConcurrent, 100));
                     ExecutionPlanOption c = ExecutionPlanOption.builder()
                             .machineType(machineType)
                             .workerCount(workers)
-                            .shardCount(shards)
+                            .partitionCount(partitionCount)
+                            .maxConcurrentShards(maxConcurrent)
+                            .shardCount(partitionCount)
                             .virtualCpus(vCpus)
                             .suggestedPoolSize(poolSize)
-                            .label(machineType + "-" + workers + "w-" + shards + "s")
+                            .label(machineType + "-" + workers + "w-" + partitionCount + "s")
                             .build();
                     if (seen.add(c)) {
                         candidates.add(c);

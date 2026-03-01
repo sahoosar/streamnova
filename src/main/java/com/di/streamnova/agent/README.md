@@ -22,16 +22,14 @@ Orchestrator for a fully autonomous batch loading system: plan → optimize cost
 - **Postgres warm-up read** – small read to discover read throughput (MB/s).
 - **ProfileStore** – interface + in-memory impl; use suggested schema for persistent learning store.
 
-### Tables for tracking (suggested)
+### Tables for tracking (Flyway)
 
-See `src/main/resources/agent/profiler/AGENT_TABLES_SCHEMA.sql`:
+**Flyway** runs migrations from `src/main/resources/db/migration/` when a DataSource is configured:
 
-- `agent_table_profiles` – per-run table profile (row count, avg row size, complexity).
-- `agent_throughput_discovery` – warm-up read results (bytes, duration, throughput MB/s).
-- `agent_runs` – full run lifecycle (mode, load pattern, status); for later segments.
-- `agent_estimates_vs_actuals` – for self-learning (estimates vs actuals after execution).
+- **V1__agent_tables.sql** – `agent_table_profiles`, `agent_throughput_discovery`, `agent_runs`, `agent_estimates_vs_actuals` (PostgreSQL).
+- **V2__dataflow_job_metadata.sql** – `dataflow_job_metadata` for Dataflow job status across request timeouts.
 
-Apply the schema with Flyway/Liquibase when implementing persistent Metrics & Learning Store.
+Configure **spring.datasource.url** (and username/password) to the PostgreSQL database where these tables should live; Flyway runs on startup and creates/updates schema. Same DB as pipeline source or a dedicated tracking DB both work. Reference SQL (for manual use) remains in `src/main/resources/agent/profiler/AGENT_TABLES_SCHEMA.sql` and `src/main/resources/agent/metrics/DATAFLOW_JOB_METADATA_SCHEMA.sql`.
 
 ## Candidate Generator (implemented)
 

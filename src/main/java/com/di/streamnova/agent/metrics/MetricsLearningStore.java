@@ -25,4 +25,6 @@ public interface MetricsLearningStore {
     Optional<ExecutionStatus> findExecutionStatusByRunId(String runId);
     List<ExecutionStatus> findRecentExecutionStatuses(int limit);
     List<ExecutionStatus> findExecutionStatusesByStatus(String status, int limit);
+    /** Find runs triggered by a given caller agent (e.g. agent-1). Empty or null callerAgentId returns recent runs. */
+    List<ExecutionStatus> findExecutionStatusesByCallerAgentId(String callerAgentId, int limit);
 }

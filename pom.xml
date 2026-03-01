@@ -2,179 +2,275 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    
+
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.4</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <version>4.0.3</version>
+        <relativePath/>
     </parent>
 
     <groupId>com.di</groupId>
     <artifactId>streamnova</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>StreamNova</name>
-    <description>Demo project for Spring Boot</description>
+    <description>Agentic Data Pipeline Platform powered by Spring Boot AI, Vertex AI (Gemini), and Apache Beam</description>
     <packaging>jar</packaging>
 
+    <!-- ================================================================ -->
+    <!-- Global Properties                                                 -->
+    <!-- ================================================================ -->
+    <!-- Build and run with OpenJDK 21 LTS (e.g. Eclipse Temurin 21, or jdk.java.net/21). -->
     <properties>
-        <beam.version>2.66.0</beam.version>
-        <gsm.version>2.66.0</gsm.version>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
-        <java.version>17</java.version>
-        <spring.boot.version>3.4.0</spring.boot.version>
+
+        <!-- Core versions -->
+        <beam.version>2.69.0</beam.version>
+        <spring-ai.version>1.0.0-M6</spring-ai.version>
+        <lombok.version>1.18.34</lombok.version>
+        <jackson.version>2.17.1</jackson.version>
+
+        <!-- GCP -->
+        <google-cloud-bom.version>26.49.0</google-cloud-bom.version>
     </properties>
 
-    <dependencies>
-        <!-- Spring Boot -->
-        <!-- Spring Boot JDBC Starter (already brings HikariCP by default) -->
-       <!-- <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
-        </dependency>-->
+    <!-- ================================================================ -->
+    <!-- BOM (Dependency Management)                                       -->
+    <!-- ================================================================ -->
+    <dependencyManagement>
+        <dependencies>
+            <!-- Spring AI BOM — controls all spring-ai-* versions -->
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
 
+            <!-- Google Cloud BOM -->
+            <dependency>
+                <groupId>com.google.cloud</groupId>
+                <artifactId>libraries-bom</artifactId>
+                <version>${google-cloud-bom.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- ================================================================ -->
+    <!-- Dependencies                                                      -->
+    <!-- ================================================================ -->
+    <dependencies>
+
+        <!-- ============================================================ -->
+        <!-- Spring Boot — Core                                            -->
+        <!-- ============================================================ -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
-            <version>${spring.boot.version}</version>
         </dependency>
-
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
-            <version>${spring.boot.version}</version>
         </dependency>
-
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
-
-        <!-- Spring AOP for aspect-oriented event logging -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
+            <artifactId>spring-boot-starter-aspectj</artifactId>
         </dependency>
-
-        <!-- Micrometer Prometheus Registry for metrics export -->
         <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
-
-        <!-- Explicit HikariCP dependency -->
         <dependency>
-            <groupId>com.zaxxer</groupId>
-            <artifactId>HikariCP</artifactId>
-            <version>5.1.0</version> <!-- latest stable -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <!-- Spring Cache abstraction + Caffeine (in-memory cache for profile store, etc.) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+        <!-- Flyway: migrations for agent tables and Dataflow job metadata (PostgreSQL) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
         </dependency>
 
-        <!-- Apache Beam -->
+        <!-- ============================================================ -->
+        <!-- Spring AI — Vertex AI Gemini (Chat + Embedding)              -->
+        <!-- ============================================================ -->
+
+        <!-- Spring AI core (ChatClient, ChatModel, Tool abstractions)    -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-core</artifactId>
+        </dependency>
+
+        <!-- Auto-configures VertexAiGeminiChatModel from application.yml -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-vertex-ai-gemini-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- Vertex AI text-embedding-004 model for vector search / RAG   -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-vertex-ai-embedding-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- ============================================================ -->
+        <!-- Apache Beam                                                   -->
+        <!-- ============================================================ -->
         <dependency>
             <groupId>org.apache.beam</groupId>
             <artifactId>beam-sdks-java-core</artifactId>
             <version>${beam.version}</version>
         </dependency>
-
         <dependency>
             <groupId>org.apache.beam</groupId>
             <artifactId>beam-sdks-java-io-google-cloud-platform</artifactId>
             <version>${beam.version}</version>
         </dependency>
-
         <dependency>
             <groupId>org.apache.beam</groupId>
             <artifactId>beam-sdks-java-io-jdbc</artifactId>
             <version>${beam.version}</version>
         </dependency>
-
+        <!-- Dataflow runner (prod / staging) -->
         <dependency>
             <groupId>org.apache.beam</groupId>
             <artifactId>beam-runners-google-cloud-dataflow-java</artifactId>
             <version>${beam.version}</version>
         </dependency>
-
+        <!-- Direct runner (local dev / tests) -->
         <dependency>
             <groupId>org.apache.beam</groupId>
             <artifactId>beam-runners-direct-java</artifactId>
             <version>${beam.version}</version>
         </dependency>
 
-        <!-- Google Cloud -->
+        <!-- ============================================================ -->
+        <!-- Google Cloud                                                   -->
+        <!-- ============================================================ -->
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-secretmanager</artifactId>
-            <version>${gsm.version}</version>
+        </dependency>
+        <!-- Vertex AI SDK (used directly by Spring AI; also available for custom calls) -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-aiplatform</artifactId>
+        </dependency>
+        <!-- GCS client — direct streaming writes for Stage 1 shard output -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-storage</artifactId>
+        </dependency>
+        <!-- BigQuery client — Load Jobs API for Stage 3 bulk load -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-bigquery</artifactId>
         </dependency>
 
-        <!-- JSON & YAML Processing -->
+        <!-- ============================================================ -->
+        <!-- Metrics & Tracing                                             -->
+        <!-- ============================================================ -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+
+        <!-- ============================================================ -->
+        <!-- Serialization                                                 -->
+        <!-- ============================================================ -->
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>2.17.1</version>
+            <version>${jackson.version}</version>
         </dependency>
-
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
-            <version>2.17.1</version>
+            <version>${jackson.version}</version>
         </dependency>
-
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.17.1</version>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>${jackson.version}</version>
         </dependency>
 
-        <!-- Database -->
+        <!-- ============================================================ -->
+        <!-- Database                                                      -->
+        <!-- ============================================================ -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <version>42.7.3</version>
         </dependency>
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>5.1.0</version>
+        </dependency>
 
-      
-        <!-- Development Tools -->
+        <!-- ============================================================ -->
+        <!-- Utilities                                                     -->
+        <!-- ============================================================ -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+        </dependency>
+
+        <!-- ============================================================ -->
+        <!-- Dev Tools                                                     -->
+        <!-- ============================================================ -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
             <scope>runtime</scope>
             <optional>true</optional>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-                <!-- Lombok -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>1.18.34</version>
-            <scope>provided</scope>
-        </dependency>
 
-        <!-- Spring Configuration Processor -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-configuration-processor</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <!-- Testing -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>5.10.1</version>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Monitoring and Tracing -->
-        <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-tracing-bridge-brave</artifactId>
-        </dependency>
-
+        <!-- ============================================================ -->
+        <!-- Testing                                                       -->
+        <!-- ============================================================ -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -186,22 +282,63 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.1</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Spring AI test utilities (mock chat models) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
+    <!-- ================================================================ -->
+    <!-- Build                                                             -->
+    <!-- ================================================================ -->
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.4.0</version>
+                <executions>
+                    <execution>
+                        <id>require-java-21</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,22)</version>
+                                    <message>
+                                        This project requires JDK 21. The JVM running Maven is older.
+                                        Set JAVA_HOME to a JDK 21 installation and run Maven again.
+                                        Example: export JAVA_HOME=/path/to/jdk-21
+                                    </message>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.11.0</version>
                 <configuration>
-                    <source>17</source>
-                    <target>17</target>
+                    <source>21</source>
+                    <target>21</target>
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
-                            <version>1.18.34</version>
+                            <version>${lombok.version}</version>
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
@@ -209,6 +346,14 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -223,5 +368,97 @@
             </plugin>
         </plugins>
     </build>
+
+    <!-- ================================================================ -->
+    <!-- Profiles                                                          -->
+    <!-- ================================================================ -->
+    <profiles>
+        <!-- Local development: Direct Runner, verbose logging           -->
+        <profile>
+            <id>local</id>
+            <activation><activeByDefault>true</activeByDefault></activation>
+            <properties>
+                <spring.profiles.active>postgres</spring.profiles.active>
+                <beam.runner>DirectRunner</beam.runner>
+            </properties>
+        </profile>
+
+        <!-- SIT -->
+        <profile>
+            <id>postgres-sit</id>
+            <properties>
+                <spring.profiles.active>postgres,sit</spring.profiles.active>
+                <beam.runner>DataflowRunner</beam.runner>
+            </properties>
+        </profile>
+        <profile>
+            <id>oracle-sit</id>
+            <properties>
+                <spring.profiles.active>oracle,sit</spring.profiles.active>
+                <beam.runner>DataflowRunner</beam.runner>
+            </properties>
+        </profile>
+
+        <!-- UAT -->
+        <profile>
+            <id>postgres-uat</id>
+            <properties>
+                <spring.profiles.active>postgres,uat</spring.profiles.active>
+                <beam.runner>DataflowRunner</beam.runner>
+            </properties>
+        </profile>
+        <profile>
+            <id>oracle-uat</id>
+            <properties>
+                <spring.profiles.active>oracle,uat</spring.profiles.active>
+                <beam.runner>DataflowRunner</beam.runner>
+            </properties>
+        </profile>
+
+        <!-- PROD -->
+        <profile>
+            <id>postgres-prod</id>
+            <properties>
+                <spring.profiles.active>postgres,prod</spring.profiles.active>
+                <beam.runner>DataflowRunner</beam.runner>
+            </properties>
+        </profile>
+        <profile>
+            <id>oracle-prod</id>
+            <properties>
+                <spring.profiles.active>oracle,prod</spring.profiles.active>
+                <beam.runner>DataflowRunner</beam.runner>
+            </properties>
+        </profile>
+    </profiles>
+
+    <!-- ================================================================ -->
+    <!-- Repositories (Spring AI milestones)                              -->
+    <!-- ================================================================ -->
+    <repositories>
+        <repository>
+            <id>spring-milestones</id>
+            <name>Spring Milestones</name>
+            <url>https://repo.spring.io/milestone</url>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+        <repository>
+            <id>spring-snapshots</id>
+            <name>Spring Snapshots</name>
+            <url>https://repo.spring.io/snapshot</url>
+            <releases><enabled>false</enabled></releases>
+        </repository>
+    </repositories>
+    <pluginRepositories>
+        <pluginRepository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+            <snapshots><enabled>false</enabled></snapshots>
+        </pluginRepository>
+        <pluginRepository>
+            <id>spring-milestones</id>
+            <url>https://repo.spring.io/milestone</url>
+        </pluginRepository>
+    </pluginRepositories>
 
 </project>

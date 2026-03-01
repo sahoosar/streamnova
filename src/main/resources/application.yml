@@ -2,6 +2,8 @@
 # Application
 # ============================================================================
 spring:
+  config:
+    import: optional:classpath:sql-queries.yml
   application:
     name: StreamNova  # Used in logs and transaction events
 
@@ -9,6 +11,14 @@ spring:
   # (Spring Boot 3.5+ does not support spring.profiles in config; use CLI or env instead.)
   devtools:
     add-properties: false  # Disable property-defaults log message (optional)
+
+  # Flyway: runs when a DataSource is configured (e.g. spring.datasource.url in a profile).
+  # Migrations in classpath:db/migration/ create agent tables and dataflow_job_metadata (PostgreSQL).
+  # To use: set spring.datasource.url (and username/password) to your Postgres DB; Flyway runs on startup.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
 
 # Context path (e.g. when behind a proxy at /streamnova)
 server:
@@ -68,6 +78,7 @@ streamnova:
   # track-controllers: every REST controller method. track-services: runner + agent/config services.
   # metrics-enabled: publish streamnova.tx.duration and streamnova.tx.count to Micrometer (Prometheus).
   # structured-logging: log as key=value (event=TX-START layer=... ) for log aggregation (ELK, Splunk).
+  # MDC tracing: every request gets requestId + requestPath (MdcRequestFilter); agent endpoints add caller_agent_id/execution_run_id; logback includes %X{...} for correlation in concurrent/multithreaded logs.
   aspect:
     track-controllers: true
     track-services: true
@@ -75,11 +86,41 @@ streamnova:
     metric-name-prefix: streamnova.tx
     structured-logging: true
 
+  # ============================================================================
+  # GUARDRAILS MODULE
+  # All guardrail values are YAML-only. No @Value annotation or hard-coded
+  # list exists anywhere in the codebase — change here, redeploy, done.
+  #
+  # Per-environment overrides belong in application-{profile}.yml.
+  # Per-request overrides (maxCostUsd, allowedMachineTypes query params) are
+  # merged at runtime by GuardrailService.buildWithOverrides().
+  # ============================================================================
   guardrails:
-    allowed-machine-types: n2d-standard-2,n2-standard-2,n2d-standard-4,c3-standard-4,n2-standard-4,n2d-standard-8,c3-standard-8,n2-standard-8,n2d-standard-16,n2-standard-16
-    # Optional: uncomment and set to enable default SLA when client omits them
-    # max-duration-sec:   # e.g. 3600 = 1h
-    # max-cost-usd:       # e.g. 10.0
+
+    # -- Machine-type allow-list -----------------------------------------------
+    # Exact match OR family prefix (n2d matches all n2d-* types). Empty = no restriction.
+    allowed-machine-types: n2d-standard-4,n2d-standard-8,n2d-standard-16,n2-standard-4,n2-standard-8,n2-standard-16,c3-standard-4,c3-standard-8,c3-standard-16
+
+    # Ordered machine-family preference (keep n2d before n2).
+    machine-family-order: n2d,n2,c3
+
+    # -- Cost / duration / throughput limits (null = no limit) ----------------
+    # Uncomment and set to activate. Override per profile in application-{env}.yml.
+    # max-cost-usd:              # e.g. 5.00   — max estimated $ per run
+    # max-duration-sec:          # e.g. 7200   — 2h max per run
+    # min-throughput-mb-per-sec: # e.g. 10     — reject slow candidates
+
+    # -- Worker / shard global caps -------------------------------------------
+    max-workers-global: 0    # 0 = use recommend.max-workers-cap
+    max-shards-global:  0    # 0 = derive from DB pool size
+
+    # -- Concurrency (shared pool) --------------------------------------------
+    # Max concurrent runs when not exclusive. 0 = no cap. E.g. 2 = at most 2 loads at a time (more 429s, shorter per-load time).
+    max-concurrent-runs: 0
+
+    # -- Enforcement switches (set false to disable without removing config) ---
+    enforce-on-recommend: true
+    enforce-on-execute:   true
 
   # --------------------------------------------------------------------------
   # Estimator (duration and cost estimation)
@@ -142,7 +183,7 @@ streamnova:
     high-mem-target-records-per-shard: 100000
     standard-target-records-per-shard: 50000
     fallback-max-records-per-shard: 200000  # Min-shards when size not available
-    max-mb-per-shard: 500                   # Min-shards when size available (MB)
+    max-mb-per-shard: 256                   # Min-shards when size available (MB)
     pool-headroom-ratio: 0.8                # Shard cap = pool-size × this (e.g. 80%)
 
   # --------------------------------------------------------------------------
@@ -164,6 +205,16 @@ streamnova:
   profiler:
     warm-up-rows: 5000
     warm-up-fetch-size: 1000
+    # Profile store cache: only used when metrics.persistence-enabled=true AND cache-enabled=true.
+    # Lower/test: leave cache-enabled false (persistent store, no cache). Higher env: set true.
+    cache-enabled: ${STREAMNOVA_PROFILE_CACHE_ENABLED:false}
+    cache:
+      by-run-id:
+        max-size: ${STREAMNOVA_PROFILE_CACHE_BY_RUN_ID_MAX_SIZE:1000}
+        expire-after-write-minutes: ${STREAMNOVA_PROFILE_CACHE_BY_RUN_ID_EXPIRE_MIN:30}
+      recent-by-table:
+        max-size: ${STREAMNOVA_PROFILE_CACHE_RECENT_MAX_SIZE:500}
+        expire-after-write-minutes: ${STREAMNOVA_PROFILE_CACHE_RECENT_EXPIRE_MIN:5}
 
   # --------------------------------------------------------------------------
   # Capacity (execute admission and rate limiting)
@@ -173,6 +224,21 @@ streamnova:
     retry-after-sec: 60
     max-shards: 0  # 0 = derive from pipeline_config maximumPoolSize; set >0 to override
     shards-not-available-message: "Not enough shards available; please wait for full availability."
+    # Max concurrent execute attempts (POST execute + webhook execute). 0 = no limit.
+    # When set, excess requests get 429 (handles request floods in shared-pool mode). Recommend setting when using shared pool (e.g. 10).
+    max-concurrent-execute-requests: 0
+
+  # --------------------------------------------------------------------------
+  # Metrics & learning store (multi-agent tracking)
+  # When true and a datasource is configured, execution status and estimates are persisted to agent_runs / agent_estimates_vs_actuals.
+  # Each of the 10 agents should send caller_agent_id in the webhook body; use GET /api/agent/executions?callerAgentId=agent-1 to list their runs.
+  # --------------------------------------------------------------------------
+  metrics:
+    persistence-enabled: ${STREAMNOVA_METRICS_PERSISTENCE_ENABLED:false}
+    # Agent invocation audit (when persistence-enabled=true): max lengths for stored request/response summary and endpoint.
+    audit:
+      max-summary-length: ${STREAMNOVA_AUDIT_MAX_SUMMARY_LENGTH:4096}
+      max-endpoint-length: ${STREAMNOVA_AUDIT_MAX_ENDPOINT_LENGTH:256}
 
   # --------------------------------------------------------------------------
   # Statistics / pipeline config
@@ -181,6 +247,33 @@ streamnova:
     # Input sources to support. Matches spring.profiles (postgres, oracle, or both).
     # When both: postgres and oracle pipeline configs are loaded and datasources created for each.
     #supported-source-types: postgres,oracle
+
+  # --------------------------------------------------------------------------
+  # Spring AI — Vertex AI (Gemini) configuration
+  # Override per profile in application-{profile}.yml
+  # --------------------------------------------------------------------------
+  ai:
+    enabled: ${STREAMNOVA_AI_ENABLED:true}
+    # Vertex AI project + location (mirrors spring.ai.vertex.ai.gemini.* below)
+    vertex:
+      project-id: ${VERTEX_PROJECT_ID:your-gcp-project-id}
+      location:   ${VERTEX_LOCATION:us-central1}
+    # Gemini chat model defaults
+    chat:
+      model:            ${AI_CHAT_MODEL:gemini-2.0-flash-001}
+      temperature:      ${AI_TEMPERATURE:0.3}
+      top-p:            ${AI_TOP_P:0.95}
+      max-output-tokens: ${AI_MAX_TOKENS:8192}
+    # Embedding model
+    embedding:
+      model: ${AI_EMBEDDING_MODEL:text-embedding-004}
+    # Agent behaviour
+    agent:
+      max-iterations:   ${AI_AGENT_MAX_ITERATIONS:10}
+      timeout-seconds:  ${AI_AGENT_TIMEOUT_SECONDS:60}
+      retry-attempts:   ${AI_AGENT_RETRY_ATTEMPTS:3}
+      memory-enabled:   ${AI_AGENT_MEMORY_ENABLED:true}
+      memory-max-turns: ${AI_AGENT_MEMORY_MAX_TURNS:20}
 
   # --------------------------------------------------------------------------
   # Pipeline config: event configs only (database_event_config.yml, gcs_event_config.yml, bq_event_config.yml)
@@ -219,3 +312,27 @@ streamnova:
     # Leave empty for no restriction (any registered handler allowed).
     # Example: expected-handler: postgres
     expected-handler:
+
+# ============================================================================
+# Spring AI — Vertex AI Gemini (auto-configuration)
+# These keys are read by spring-ai-vertex-ai-gemini-spring-boot-starter.
+# Profile-specific overrides live in application-{profile}.yml.
+# ============================================================================
+spring:
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: ${VERTEX_PROJECT_ID:your-gcp-project-id}
+          location:   ${VERTEX_LOCATION:us-central1}
+          chat:
+            options:
+              model:             ${AI_CHAT_MODEL:gemini-2.0-flash-001}
+              temperature:       ${AI_TEMPERATURE:0.3}
+              top-p:             ${AI_TOP_P:0.95}
+              max-output-tokens: ${AI_MAX_TOKENS:8192}
+              candidate-count:   1
+          embedding:
+            options:
+              model:                  ${AI_EMBEDDING_MODEL:text-embedding-004}
+              output-dimensionality:  768

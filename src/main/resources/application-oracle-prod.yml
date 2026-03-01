@@ -19,3 +19,38 @@ pipeline:
       username: ${ORACLE_PROD_USERNAME:}
       password: ${ORACLE_PROD_PASSWORD:}
       table: ${ORACLE_PROD_TABLE:schema.some_table}
+
+# ── Spring AI / Vertex AI (Oracle PROD) ──────────────────────────
+spring:
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: ${VERTEX_PROJECT_ID}
+          location:   ${VERTEX_LOCATION:us-central1}
+          chat:
+            options:
+              model:        ${AI_CHAT_MODEL:gemini-2.0-flash-001}
+              temperature:  0.1
+
+streamnova:
+  ai:
+    enabled: true
+    agent:
+      timeout-seconds: 60
+      retry-attempts:  3
+    vertex:
+      project-id: ${VERTEX_PROJECT_ID}
+
+# ── Guardrails (Oracle PROD) ─────────────────────────────────────────────────
+streamnova:
+  guardrails:
+    allowed-machine-types: ${GUARDRAIL_ALLOWED_MACHINE_TYPES:n2d-standard-4,n2d-standard-8,n2d-standard-16,n2-standard-4,n2-standard-8,c3-standard-4}
+    machine-family-order: n2d,n2,c3
+    max-cost-usd:          ${GUARDRAIL_MAX_COST_USD:20.00}
+    max-duration-sec:      ${GUARDRAIL_MAX_DURATION_SEC:7200}
+    min-throughput-mb-per-sec: ${GUARDRAIL_MIN_THROUGHPUT:10}
+    max-workers-global:    ${GUARDRAIL_MAX_WORKERS:8}
+    max-shards-global:     ${GUARDRAIL_MAX_SHARDS:64}
+    enforce-on-recommend: true
+    enforce-on-execute:   true

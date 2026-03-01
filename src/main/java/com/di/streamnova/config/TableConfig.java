@@ -1,5 +1,7 @@
 package com.di.streamnova.config;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -11,12 +13,23 @@ import java.util.List;
  * Only connection and table are required; other fields override the connection's values when set.
  */
 @Data
+@Builder
 @NoArgsConstructor
+@AllArgsConstructor
 public class TableConfig {
     /** Connection name (e.g. postgres, oracle). Must be a key in pipeline.config.connections. Required. */
     private String connection;
     /** Full table name (e.g. market_summary or schema.some_table). Required. */
     private String table;
+
+    /** Schema name (for AI tool / profiler). */
+    private String schema;
+    /** Table name only (for AI tool / profiler). */
+    private String tableName;
+    /** Estimated row count (for AI recommendation tool). */
+    private Long estimatedRows;
+    /** Estimated table size in MB (for AI recommendation tool). */
+    private Double estimatedSizeMb;
 
     /** Optional. Max columns to read (0 = no limit). Omit to use connection's value. */
     private Integer maxColumns;

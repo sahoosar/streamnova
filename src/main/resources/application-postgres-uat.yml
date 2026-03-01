@@ -18,3 +18,37 @@ pipeline:
       username: ${POSTGRES_UAT_USERNAME:uat_user}
       password: ${POSTGRES_UAT_PASSWORD:}
       table: ${POSTGRES_UAT_TABLE:market_summary}
+
+# ── Spring AI / Vertex AI (UAT) ──────────────────────────────────
+spring:
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: ${VERTEX_PROJECT_ID:streamnova-uat}
+          location:   ${VERTEX_LOCATION:us-central1}
+          chat:
+            options:
+              model:             gemini-2.0-flash-001
+              temperature:       0.3
+              max-output-tokens: 8192
+
+streamnova:
+  ai:
+    enabled: true
+    vertex:
+      project-id: ${VERTEX_PROJECT_ID:streamnova-uat}
+
+# ── Guardrails (UAT) ─────────────────────────────────────────────────────────
+# Production-like limits for UAT validation.
+streamnova:
+  guardrails:
+    allowed-machine-types: n2d-standard-4,n2d-standard-8,n2d-standard-16,n2-standard-4,n2-standard-8
+    machine-family-order: n2d,n2,c3
+    max-cost-usd: 10.00        # $10 cap per run
+    max-duration-sec: 10800    # 3h max
+    min-throughput-mb-per-sec: 5
+    max-workers-global: 4
+    max-shards-global: 32
+    enforce-on-recommend: true
+    enforce-on-execute: true

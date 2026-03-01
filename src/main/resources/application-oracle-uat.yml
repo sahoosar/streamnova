@@ -18,3 +18,35 @@ pipeline:
       username: ${ORACLE_UAT_USERNAME:uat_user}
       password: ${ORACLE_UAT_PASSWORD:}
       table: ${ORACLE_UAT_TABLE:schema.some_table}
+
+# ── Spring AI / Vertex AI (Oracle UAT) ───────────────────────────
+spring:
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: ${VERTEX_PROJECT_ID:streamnova-uat}
+          location:   ${VERTEX_LOCATION:us-central1}
+          chat:
+            options:
+              model:        gemini-2.0-flash-001
+              temperature:  0.3
+
+streamnova:
+  ai:
+    enabled: true
+    vertex:
+      project-id: ${VERTEX_PROJECT_ID:streamnova-uat}
+
+# ── Guardrails (Oracle UAT) ──────────────────────────────────────────────────
+streamnova:
+  guardrails:
+    allowed-machine-types: n2d-standard-4,n2d-standard-8,n2d-standard-16,n2-standard-4,n2-standard-8
+    machine-family-order: n2d,n2,c3
+    max-cost-usd: 10.00
+    max-duration-sec: 10800
+    min-throughput-mb-per-sec: 5
+    max-workers-global: 4
+    max-shards-global: 32
+    enforce-on-recommend: true
+    enforce-on-execute: true

@@ -18,3 +18,37 @@ pipeline:
       username: ${POSTGRES_SIT_USERNAME:sit_user}
       password: ${POSTGRES_SIT_PASSWORD:}
       table: ${POSTGRES_SIT_TABLE:market_summary}
+
+# ── Spring AI / Vertex AI (SIT) ──────────────────────────────────
+spring:
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: ${VERTEX_PROJECT_ID:streamnova-sit}
+          location:   ${VERTEX_LOCATION:us-central1}
+          chat:
+            options:
+              model:             gemini-2.0-flash-001
+              temperature:       0.4
+              max-output-tokens: 4096
+
+streamnova:
+  ai:
+    enabled: true
+    vertex:
+      project-id: ${VERTEX_PROJECT_ID:streamnova-sit}
+
+# ── Guardrails (SIT) ─────────────────────────────────────────────────────────
+# Relaxed limits for integration testing — allow all n2d types, no cost cap.
+streamnova:
+  guardrails:
+    allowed-machine-types: n2d-standard-4,n2d-standard-8,n2-standard-4,n2-standard-8
+    machine-family-order: n2d,n2,c3
+    max-cost-usd:              # no limit in SIT
+    max-duration-sec: 14400    # 4h max
+    min-throughput-mb-per-sec: # no floor in SIT
+    max-workers-global: 4
+    max-shards-global: 16
+    enforce-on-recommend: true
+    enforce-on-execute: true
